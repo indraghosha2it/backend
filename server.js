@@ -126,7 +126,52 @@ const employeeSchema = new mongoose.Schema({
   }
 });
 
-const Employee = mongoose.model('Employee', employeeSchema);
+// =============== BILL/UTILITIES SCHEMA ===============
+const billSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  date: {
+    type: Date,
+    required: true,
+    default: Date.now
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['cash', 'bank_transfer', 'credit_card', 'debit_card', 'online', 'other'],
+    default: 'bank_transfer'
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['paid', 'unpaid', 'pending'],
+    default: 'paid'
+  },
+  isFixed: {
+    type: Boolean,
+    default: false
+  },
+  notes: {
+    type: String,
+    trim: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+
 
 // Office Rent Schema
 const officeRentSchema = new mongoose.Schema({
@@ -155,7 +200,12 @@ const officeRentSchema = new mongoose.Schema({
   }
 });
 
+
+
+
+const Employee = mongoose.model('Employee', employeeSchema);
 const OfficeRent = mongoose.model('OfficeRent', officeRentSchema);
+const Bill = mongoose.model('Bill', billSchema);
 
 // Test route
 app.get('/api/health', (req, res) => {
@@ -521,59 +571,57 @@ app.delete('/api/office-rents/:id', async (req, res) => {
 });
 
 // Get rent summary - FIXED VERSION
-app.get('/api/office-rents/summary', async (req, res) => {
-  try {
-    console.log('📊 Summary endpoint called');
+// Get rent summary
+// app.get('/api/office-rents/summary', async (req, res) => {
+//   try {
+//     // Get all rents
+//     const allRents = await OfficeRent.find();
     
-    // Alternative approach without aggregation
-    const allRents = await OfficeRent.find();
+//     // Calculate totals
+//     let totalPaid = 0;
+//     let totalUnpaid = 0;
+//     let paidCount = 0;
+//     let unpaidCount = 0;
     
-    let totalPaid = 0;
-    let totalUnpaid = 0;
-    let paidCount = 0;
-    let unpaidCount = 0;
+//     allRents.forEach(rent => {
+//       if (rent.status === 'paid') {
+//         totalPaid += rent.rent;
+//         paidCount++;
+//       } else if (rent.status === 'unpaid') {
+//         totalUnpaid += rent.rent;
+//         unpaidCount++;
+//       }
+//     });
     
-    allRents.forEach(rent => {
-      if (rent.status === 'paid') {
-        totalPaid += rent.rent;
-        paidCount++;
-      } else if (rent.status === 'unpaid') {
-        totalUnpaid += rent.rent;
-        unpaidCount++;
-      }
-    });
-    
-    res.json({
-      success: true,
-      data: {
-        totalPaid: totalPaid,
-        totalUnpaid: totalUnpaid,
-        totalRecords: allRents.length,
-        totalAmount: totalPaid + totalUnpaid,
-        paidCount: paidCount,
-        unpaidCount: unpaidCount
-      }
-    });
-  } catch (error) {
-    console.error('❌ Error in summary:', error);
-    
-    // Return empty summary on error
-    res.json({
-      success: true,
-      data: {
-        totalPaid: 0,
-        totalUnpaid: 0,
-        totalRecords: 0,
-        totalAmount: 0,
-        paidCount: 0,
-        unpaidCount: 0
-      },
-      error: error.message
-    });
-  }
-});
+//     res.json({
+//       success: true,
+//       data: {
+//         totalPaid: totalPaid,
+//         totalUnpaid: totalUnpaid,
+//         totalRecords: allRents.length,
+//         totalAmount: totalPaid + totalUnpaid,
+//         paidCount: paidCount,
+//         unpaidCount: unpaidCount
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Error in summary:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       error: error.message 
+//     });
+//   }
+// });
 
-const PORT = process.env.PORT || 5000;
+
+
+//bills
+
+
+// Get bill by ID
+
+
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌐 API: http://localhost:${PORT}`);
