@@ -1,3 +1,73 @@
+// const express = require('express');
+// const cors = require('cors');
+// // require('dotenv').config();
+// const { MongoClient, ServerApiVersion } = require('mongodb');
+
+
+// const PORT = process.env.PORT || 5000;
+// const app = express();
+
+// // Middleware
+// app.use(cors());
+// app.use(express.json());
+
+
+// // user name: indraghosha2it_db_user
+// // password: lK9eXloK1ehvs32A
+
+
+
+
+// // mongoDB CODE
+
+// const uri = "mongodb+srv://indraghosha2it_db_user:3ZtFZcmwF4pqay9Z@cluster0.2xrkmju.mongodb.net/?appName=Cluster0";
+
+// // Create a MongoClient with a MongoClientOptions object to set the Stable API version
+// const client = new MongoClient(uri, {
+//   serverApi: {
+//     version: ServerApiVersion.v1,
+//     strict: true,
+//     deprecationErrors: true,
+//   }
+// });
+
+// async function run() {
+//   try {
+//     // Connect the client to the server	(optional starting in v4.7)
+//     await client.connect();
+//     // Send a ping to confirm a successful connection
+//     await client.db("admin").command({ ping: 1 });
+//     console.log("Pinged your deployment. You successfully connected to MongoDB!");
+//   } finally {
+//     // Ensures that the client will close when you finish/error
+//     // await client.close();
+//   }
+// }
+// run().catch(console.dir);
+
+
+// // Basic route
+// app.get('/', (req, res) => {
+//   res.json({ message: 'Cost Analysis API is running' });
+// });
+
+
+
+// // Routes will be added here
+// // app.use('/api/expenses', require('./routes/expenseRoutes'));
+// // app.use('/api/auth', require('./routes/authRoutes'));
+
+// // Error handling middleware
+// app.use((err, req, res, next) => {
+//   console.error(err.stack);
+//   res.status(500).json({ error: 'Something went wrong!' });
+// });
+
+
+// app.listen(PORT, () => {
+//   console.log(`Server running on port ${PORT}`);
+// });
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -113,6 +183,8 @@ const billSchema = new mongoose.Schema({
 // Add unique compound index to prevent duplicate bills for same month-year
 billSchema.index({ name: 1, month: 1, year: 1 }, { unique: true });
 
+
+
 // Office Rent Schema
 const officeRentSchema = new mongoose.Schema({
   date: {
@@ -140,20 +212,94 @@ const officeRentSchema = new mongoose.Schema({
   }
 });
 
-const Employee = mongoose.model('Employee', employeeSchema);
-const OfficeRent = mongoose.model('OfficeRent', officeRentSchema);
-const Bill = mongoose.model('Bill', billSchema);
-
-// Add a pre-save middleware to automatically set month and year
-billSchema.pre('save', function(next) {
-  if (this.date) {
-    const date = new Date(this.date);
-    this.month = date.getMonth() + 1;
-    this.year = date.getFullYear();
+// Office Supply Schema
+const officeSupplySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  price: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Bank Transfer', 'Mobile Banking', 'Card'],
+    required: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+    updatedAt: {
+    type: Date,
+    default: Date.now
   }
+});
+
+officeSupplySchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
+
+
+// Software Subscription Schema
+const softwareSubscriptionSchema = new mongoose.Schema({
+  softwareName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Bank Transfer', 'Mobile Banking', 'Card'],
+    required: true
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+
+// Add pre-save middleware
+softwareSubscriptionSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+
+const Employee = mongoose.model('Employee', employeeSchema);
+const OfficeRent = mongoose.model('OfficeRent', officeRentSchema);
+const Bill = mongoose.model('Bill', billSchema);
+const OfficeSupply = mongoose.model('OfficeSupply', officeSupplySchema);
+const SoftwareSubscription = mongoose.model('SoftwareSubscription', softwareSubscriptionSchema);
+
+
 
 // Test route
 app.get('/api/health', (req, res) => {
@@ -166,6 +312,8 @@ app.get('/api/health', (req, res) => {
 });
 
 // =============== EMPLOYEE ROUTES ===============
+
+// Get all employees
 app.get('/api/employees', async (req, res) => {
   try {
     const employees = await Employee.find().sort({ dateJoined: -1 });
@@ -182,12 +330,14 @@ app.get('/api/employees', async (req, res) => {
   }
 });
 
+// Add new employee
 app.post('/api/employees', async (req, res) => {
   try {
     console.log('Received employee data:', req.body);
     
     const { name, designation, salary, email, phone } = req.body;
     
+    // Validation
     if (!name || !designation || !salary) {
       return res.status(400).json({ 
         success: false, 
@@ -221,6 +371,7 @@ app.post('/api/employees', async (req, res) => {
   }
 });
 
+// Delete employee
 app.delete('/api/employees/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -246,10 +397,12 @@ app.delete('/api/employees/:id', async (req, res) => {
   }
 });
 
+// Get single employee by ID
 app.get('/api/employees/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate MongoDB ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ 
         success: false, 
@@ -278,10 +431,12 @@ app.get('/api/employees/:id', async (req, res) => {
   }
 });
 
+// Update employee
 app.put('/api/employees/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate MongoDB ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ 
         success: false, 
@@ -291,6 +446,7 @@ app.put('/api/employees/:id', async (req, res) => {
     
     const { name, designation, salary, email, phone } = req.body;
     
+    // Validation
     if (!name || !designation || !salary) {
       return res.status(400).json({ 
         success: false, 
@@ -334,6 +490,8 @@ app.put('/api/employees/:id', async (req, res) => {
 });
 
 // =============== OFFICE RENT ROUTES ===============
+
+// Get all office rents
 app.get('/api/office-rents', async (req, res) => {
   try {
     const rents = await OfficeRent.find().sort({ date: -1 });
@@ -350,10 +508,12 @@ app.get('/api/office-rents', async (req, res) => {
   }
 });
 
+// Get single office rent by ID
 app.get('/api/office-rents/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate MongoDB ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ 
         success: false, 
@@ -382,12 +542,14 @@ app.get('/api/office-rents/:id', async (req, res) => {
   }
 });
 
+// Add new office rent
 app.post('/api/office-rents', async (req, res) => {
   try {
     console.log('Received office rent data:', req.body);
     
     const { date, rent, status } = req.body;
     
+    // Validation
     if (!date || !rent) {
       return res.status(400).json({ 
         success: false, 
@@ -419,10 +581,12 @@ app.post('/api/office-rents', async (req, res) => {
   }
 });
 
+// Update office rent
 app.put('/api/office-rents/:id', async (req, res) => {
   try {
     const { id } = req.params;
     
+    // Validate MongoDB ID format
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ 
         success: false, 
@@ -432,6 +596,7 @@ app.put('/api/office-rents/:id', async (req, res) => {
     
     const { date, rent, status } = req.body;
     
+    // Validation
     if (!date || !rent) {
       return res.status(400).json({ 
         success: false, 
@@ -473,6 +638,7 @@ app.put('/api/office-rents/:id', async (req, res) => {
   }
 });
 
+// Delete office rent
 app.delete('/api/office-rents/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -498,6 +664,59 @@ app.delete('/api/office-rents/:id', async (req, res) => {
   }
 });
 
+// Get rent summary - FIXED VERSION
+// Get rent summary
+// app.get('/api/office-rents/summary', async (req, res) => {
+//   try {
+//     // Get all rents
+//     const allRents = await OfficeRent.find();
+    
+//     // Calculate totals
+//     let totalPaid = 0;
+//     let totalUnpaid = 0;
+//     let paidCount = 0;
+//     let unpaidCount = 0;
+    
+//     allRents.forEach(rent => {
+//       if (rent.status === 'paid') {
+//         totalPaid += rent.rent;
+//         paidCount++;
+//       } else if (rent.status === 'unpaid') {
+//         totalUnpaid += rent.rent;
+//         unpaidCount++;
+//       }
+//     });
+    
+//     res.json({
+//       success: true,
+//       data: {
+//         totalPaid: totalPaid,
+//         totalUnpaid: totalUnpaid,
+//         totalRecords: allRents.length,
+//         totalAmount: totalPaid + totalUnpaid,
+//         paidCount: paidCount,
+//         unpaidCount: unpaidCount
+//       }
+//     });
+//   } catch (error) {
+//     console.error('Error in summary:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       error: error.message 
+//     });
+//   }
+// });
+
+
+
+// =============== BILL ROUTES ===============
+
+// =============== BILL ROUTES ===============
+
+// Get all bills
+// =============== BILL ROUTES ===============
+
+// Get all bills
 // =============== BILL ROUTES ===============
 
 // Get all bills
@@ -550,13 +769,15 @@ app.get('/api/bills/:id', async (req, res) => {
   }
 });
 
-// Add new bills (multiple) - WITH DUPLICATE PREVENTION
+// Add new bills (multiple)
+// Add new bills (multiple) - UPDATED VERSION
 app.post('/api/bills', async (req, res) => {
   try {
     console.log('Received bills data:', req.body);
     
     const billsData = req.body;
     
+    // Validate input is an array
     if (!Array.isArray(billsData)) {
       return res.status(400).json({ 
         success: false, 
@@ -564,42 +785,41 @@ app.post('/api/bills', async (req, res) => {
       });
     }
     
+    // Process each bill
     const savedBills = [];
     const errors = [];
-    const duplicateBills = [];
     
-    // Process bills in sequence to avoid race conditions
     for (const billData of billsData) {
       const { name, amount, date, paymentMethod, isFixed } = billData;
       
       // Skip if amount is empty
       if (!amount || amount === '' || amount === '0') continue;
       
+      // Parse the date
+      const billDate = date ? new Date(date) : new Date();
+      const month = billDate.getMonth() + 1; // 1-12
+      const year = billDate.getFullYear();
+      
       try {
-        // Parse the date
-        const billDate = date ? new Date(date) : new Date();
-        const month = billDate.getMonth() + 1;
-        const year = billDate.getFullYear();
-        
-        // STRICT DUPLICATE CHECK: Check if bill already exists for this month-year
+        // Check if bill already exists for this month-year
         const existingBill = await Bill.findOne({
-          name: name.trim(),
+          name: name,
           month: month,
           year: year
         });
         
         if (existingBill) {
-          duplicateBills.push({
+          errors.push({
             name: name,
             month: month,
             year: year,
-            message: `Bill "${name}" already exists for ${billDate.toLocaleString('default', { month: 'long' })} ${year}. Use edit instead.`
+            message: `Bill "${name}" for ${billDate.toLocaleString('default', { month: 'long' })} ${year} already exists`
           });
-          continue;
+          continue; // Skip this bill
         }
         
         const bill = new Bill({
-          name: name.trim(),
+          name,
           amount: parseFloat(amount),
           date: billDate,
           month: month,
@@ -614,10 +834,12 @@ app.post('/api/bills', async (req, res) => {
         
       } catch (error) {
         if (error.code === 11000) {
-          // Duplicate key error from MongoDB unique index
-          duplicateBills.push({
+          // Duplicate key error
+          errors.push({
             name: name,
-            message: `Cannot save: ${name} already exists for this month.`
+            month: month,
+            year: year,
+            message: `Cannot save: ${name} for ${billDate.toLocaleString('default', { month: 'long' })} ${year} already exists`
           });
         } else {
           errors.push({
@@ -628,15 +850,7 @@ app.post('/api/bills', async (req, res) => {
       }
     }
     
-    console.log(`Saved ${savedBills.length} bills, ${duplicateBills.length} duplicates, ${errors.length} errors`);
-    
-    if (savedBills.length === 0 && duplicateBills.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No bills saved - all are duplicates for this month',
-        duplicates: duplicateBills
-      });
-    }
+    console.log(`Saved ${savedBills.length} bills, ${errors.length} errors`);
     
     if (savedBills.length === 0 && errors.length > 0) {
       return res.status(400).json({
@@ -646,21 +860,12 @@ app.post('/api/bills', async (req, res) => {
       });
     }
     
-    const response = {
+    res.status(201).json({
       success: true,
       message: `Saved ${savedBills.length} bill(s) successfully`,
-      data: savedBills
-    };
-    
-    if (duplicateBills.length > 0) {
-      response.duplicates = duplicateBills;
-    }
-    
-    if (errors.length > 0) {
-      response.errors = errors;
-    }
-    
-    res.status(201).json(response);
+      data: savedBills,
+      warnings: errors.length > 0 ? errors : undefined
+    });
     
   } catch (error) {
     console.error('Error saving bills:', error);
@@ -674,8 +879,148 @@ app.post('/api/bills', async (req, res) => {
 // Get bills grouped by month
 app.get('/api/bills/by-month', async (req, res) => {
   try {
+    const bills = await Bill.find().sort({ date: 1 });
+    
+    // Group bills by month-year
+    const billsByMonth = {};
+    
+    bills.forEach(bill => {
+      const date = new Date(bill.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!billsByMonth[monthYear]) {
+        billsByMonth[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          total: 0,
+          bills: [],
+          billTypes: {}
+        };
+      }
+      
+      billsByMonth[monthYear].total += bill.amount;
+      billsByMonth[monthYear].bills.push(bill);
+      
+      // Group by bill type
+      if (!billsByMonth[monthYear].billTypes[bill.name]) {
+        billsByMonth[monthYear].billTypes[bill.name] = 0;
+      }
+      billsByMonth[monthYear].billTypes[bill.name] += bill.amount;
+    });
+    
+    // Convert to array and sort by month
+    const result = Object.values(billsByMonth).sort((a, b) => b.month.localeCompare(a.month));
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('Error grouping bills by month:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get all unique bill types (for table columns)
+app.get('/api/bills/types', async (req, res) => {
+  try {
+    const billTypes = await Bill.distinct('name');
+    res.json({
+      success: true,
+      data: billTypes
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete bill
+app.delete('/api/bills/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const bill = await Bill.findByIdAndDelete(id);
+    
+    if (!bill) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Bill not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Bill deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get total statistics
+app.get('/api/bills/stats', async (req, res) => {
+  try {
+    const bills = await Bill.find();
+    
+    // Calculate totals
+    const totalAmount = bills.reduce((sum, bill) => sum + bill.amount, 0);
+    const totalBills = bills.length;
+    
+    // Count by payment method
+    const paymentStats = {};
+    bills.forEach(bill => {
+      const method = bill.paymentMethod;
+      paymentStats[method] = (paymentStats[method] || 0) + 1;
+    });
+    
+    // Count by bill type
+    const billTypeStats = {};
+    bills.forEach(bill => {
+      const type = bill.name;
+      billTypeStats[type] = (billTypeStats[type] || 0) + bill.amount;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalAmount,
+        totalBills,
+        paymentStats,
+        billTypeStats,
+        avgPerBill: totalBills > 0 ? totalAmount / totalBills : 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+
+
+
+
+
+// Get bills grouped by month
+// Get bills grouped by month - FIXED VERSION
+// Get bills grouped by month - SIMPLIFIED VERSION
+app.get('/api/bills/by-month', async (req, res) => {
+  try {
     const bills = await Bill.find().sort({ date: -1 });
     
+    // Simple grouping
     const groupedByMonth = {};
     
     bills.forEach(bill => {
@@ -698,12 +1043,14 @@ app.get('/api/bills/by-month', async (req, res) => {
       groupedByMonth[monthYear].total += bill.amount;
       groupedByMonth[monthYear].bills.push(bill);
       
+      // Add to bill types
       if (!groupedByMonth[monthYear].billTypes[bill.name]) {
         groupedByMonth[monthYear].billTypes[bill.name] = 0;
       }
       groupedByMonth[monthYear].billTypes[bill.name] += bill.amount;
     });
     
+    // Convert to array and sort
     const result = Object.values(groupedByMonth).sort((a, b) => 
       b.month.localeCompare(a.month)
     );
@@ -722,11 +1069,14 @@ app.get('/api/bills/by-month', async (req, res) => {
   }
 });
 
+// Get all unique bill types (for table columns)
+// Get all unique bill types (for table columns) - FIXED VERSION
 // Get all unique bill types
 app.get('/api/bills/types', async (req, res) => {
   try {
     const billTypes = await Bill.distinct('name');
     
+    // If no bills yet, return default types
     if (!billTypes || billTypes.length === 0) {
       return res.json({
         success: true,
@@ -774,6 +1124,7 @@ app.delete('/api/bills/:id', async (req, res) => {
 });
 
 // Get total statistics
+// Get total statistics
 app.get('/api/bills/stats', async (req, res) => {
   try {
     const bills = await Bill.find();
@@ -797,7 +1148,6 @@ app.get('/api/bills/stats', async (req, res) => {
     });
   }
 });
-
 // =============== EDIT/UPDATE ROUTES ===============
 
 // Get bills by specific month-year
@@ -838,6 +1188,7 @@ app.put('/api/bills/:id', async (req, res) => {
     
     const { name, amount, date, paymentMethod } = req.body;
     
+    // Validation
     if (!name || !amount || !date) {
       return res.status(400).json({ 
         success: false, 
@@ -845,14 +1196,15 @@ app.put('/api/bills/:id', async (req, res) => {
       });
     }
     
+    // Parse date to get month and year
     const billDate = new Date(date);
     const month = billDate.getMonth() + 1;
     const year = billDate.getFullYear();
     
-    // Check for duplicate (excluding current bill)
+    // Check if another bill with same name exists for this month-year
     const existingBill = await Bill.findOne({
-      _id: { $ne: id },
-      name: name.trim(),
+      _id: { $ne: id }, // Exclude current bill
+      name: name,
       month: month,
       year: year
     });
@@ -865,7 +1217,7 @@ app.put('/api/bills/:id', async (req, res) => {
     }
     
     const updateData = {
-      name: name.trim(),
+      name,
       amount: parseFloat(amount),
       date: billDate,
       month: month,
@@ -909,11 +1261,12 @@ app.put('/api/bills/:id', async (req, res) => {
   }
 });
 
-// Update multiple bills for a month
+// Update multiple bills for a month (for month editing)
 app.put('/api/bills/update-month', async (req, res) => {
   try {
     const { monthYear, bills } = req.body;
     
+    // Validation
     if (!monthYear || !Array.isArray(bills)) {
       return res.status(400).json({ 
         success: false, 
@@ -921,8 +1274,10 @@ app.put('/api/bills/update-month', async (req, res) => {
       });
     }
     
+    // Parse monthYear (format: "2024-01")
     const [year, month] = monthYear.split('-').map(Number);
     
+    // Get existing bills for this month
     const existingBills = await Bill.find({
       month: month,
       year: year
@@ -935,26 +1290,18 @@ app.put('/api/bills/update-month', async (req, res) => {
       errors: []
     };
     
-    // Track bill names to prevent duplicates in the same request
-    const processedNames = new Set();
-    
+    // Process each bill in the update request
     for (const billData of bills) {
       const { name, amount, date, paymentMethod, _id } = billData;
       
       try {
-        // Check for duplicate name in the same request
-        if (processedNames.has(name.trim())) {
-          results.errors.push({
-            name,
-            message: `Duplicate bill name "${name}" in the same request`
-          });
-          continue;
-        }
-        processedNames.add(name.trim());
-        
         // Skip if amount is empty
         if (!amount || amount === '' || amount === '0') {
-          continue; // Skip empty bills (they will be deleted)
+          results.errors.push({
+            name,
+            message: `Skipped "${name}" - amount is empty`
+          });
+          continue;
         }
         
         if (_id) {
@@ -970,7 +1317,7 @@ app.put('/api/bills/update-month', async (req, res) => {
           }
           
           const updateData = {
-            name: name.trim(),
+            name,
             amount: parseFloat(amount),
             date: date ? new Date(date) : new Date(),
             paymentMethod: paymentMethod || 'bank_transfer',
@@ -986,27 +1333,32 @@ app.put('/api/bills/update-month', async (req, res) => {
           results.updated.push(updatedBill);
           
         } else {
-          // Create new bill - check for existing duplicate
-          const existingDuplicate = await Bill.findOne({
-            name: name.trim(),
-            month: month,
-            year: year
+          // Create new bill
+          const billDate = date ? new Date(date) : new Date();
+          const billMonth = billDate.getMonth() + 1;
+          const billYear = billDate.getFullYear();
+          
+          // Check if bill already exists for this month
+          const existingBill = await Bill.findOne({
+            name: name,
+            month: billMonth,
+            year: billYear
           });
           
-          if (existingDuplicate) {
+          if (existingBill) {
             results.errors.push({
               name,
-              message: `Bill "${name}" already exists for this month`
+              message: `Bill "${name}" already exists for ${billDate.toLocaleString('default', { month: 'long' })} ${billYear}`
             });
             continue;
           }
           
           const newBill = new Bill({
-            name: name.trim(),
+            name,
             amount: parseFloat(amount),
-            date: date ? new Date(date) : new Date(),
-            month: month,
-            year: year,
+            date: billDate,
+            month: billMonth,
+            year: billYear,
             paymentMethod: paymentMethod || 'bank_transfer',
             isFixed: ["Electricity Bill", "Water Bill", "Internet Bill", "Gas Bill"].includes(name)
           });
@@ -1023,11 +1375,11 @@ app.put('/api/bills/update-month', async (req, res) => {
       }
     }
     
-    // Delete bills that were removed
-    const billNamesInRequest = bills.map(b => b.name.trim());
+    // Delete bills that were removed (exist in DB but not in update request)
+    const billNamesInRequest = bills.map(b => b.name);
     
     for (const existingBill of existingBills) {
-      if (!billNamesInRequest.includes(existingBill.name.trim())) {
+      if (!billNamesInRequest.includes(existingBill.name)) {
         await Bill.findByIdAndDelete(existingBill._id);
         results.deleted.push(existingBill);
       }
@@ -1076,8 +1428,27 @@ app.delete('/api/bills/month/:year/:month', async (req, res) => {
   }
 });
 
-// Fix duplicate index issue
+// Add a pre-save middleware to automatically set month and year
+billSchema.pre('save', function(next) {
+  if (this.date) {
+    const date = new Date(this.date);
+    this.month = date.getMonth() + 1;
+    this.year = date.getFullYear();
+  }
+  this.updatedAt = Date.now();
+  next();
+});
 app.get('/api/fix-index', async (req, res) => {
+  try {
+    const collection = mongoose.connection.collection('bills');
+    await collection.dropIndex("name_1_month_1_year_1");
+    res.json({ success: true, message: "Index removed successfully" });
+  } catch (error) {
+    res.json({ success: false, error: error.message });
+  }
+});
+// Add this route to REMOVE the problematic index
+app.get('/api/remove-duplicate-index', async (req, res) => {
   try {
     const collection = mongoose.connection.collection('bills');
     
@@ -1085,23 +1456,18 @@ app.get('/api/fix-index', async (req, res) => {
     const indexes = await collection.indexes();
     console.log('Current indexes:', indexes);
     
-    // Try to remove problematic index
+    // Remove the problematic index if it exists
     try {
       await collection.dropIndex("name_1_month_1_year_1");
       console.log('✅ Duplicate index removed');
-      
-      // Recreate it with proper settings
-      await Bill.createIndexes();
-      console.log('✅ Index recreated');
-      
     } catch (error) {
-      console.log('Index operation:', error.message);
+      console.log('Index might not exist or already removed:', error.message);
     }
     
     res.json({ 
       success: true, 
-      message: "Index cleanup completed",
-      indexes: await collection.indexes()
+      message: "Index cleanup attempted",
+      indexes: indexes 
     });
   } catch (error) {
     res.json({ 
@@ -1111,14 +1477,18 @@ app.get('/api/fix-index', async (req, res) => {
   }
 });
 
-// Clear all bills (for testing)
-app.delete('/api/bills/clear-all', async (req, res) => {
+
+
+// =============== OFFICE SUPPLY ROUTES ===============
+
+// Get all office supplies
+app.get('/api/office-supplies', async (req, res) => {
   try {
-    const result = await Bill.deleteMany({});
+    const supplies = await OfficeSupply.find().sort({ date: -1 });
     res.json({
       success: true,
-      message: `Cleared ${result.deletedCount} bills`,
-      data: result
+      count: supplies.length,
+      data: supplies
     });
   } catch (error) {
     res.status(500).json({ 
@@ -1128,6 +1498,458 @@ app.delete('/api/bills/clear-all', async (req, res) => {
   }
 });
 
+// Add office supplies (multiple)
+app.post('/api/office-supplies', async (req, res) => {
+  try {
+    console.log('Received office supplies data:', req.body);
+    
+    const suppliesData = req.body;
+    
+    // Validate input is an array
+    if (!Array.isArray(suppliesData)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Expected an array of supplies' 
+      });
+    }
+    
+    // Process each supply
+    const savedSupplies = [];
+    const errors = [];
+    
+    for (const supplyData of suppliesData) {
+      const { name, date, price, paymentMethod } = supplyData;
+      
+      // Skip if required fields are empty
+      if (!name || !price || !date) {
+        errors.push({
+          name: name || 'Unknown',
+          message: 'Name, date, and price are required'
+        });
+        continue;
+      }
+      
+      try {
+        const supply = new OfficeSupply({
+          name,
+          date: new Date(date),
+          price: parseFloat(price),
+          paymentMethod: paymentMethod
+        });
+        
+        await supply.save();
+        savedSupplies.push(supply);
+        
+      } catch (error) {
+        errors.push({
+          name: name,
+          message: `Error saving "${name}": ${error.message}`
+        });
+      }
+    }
+    
+    console.log(`Saved ${savedSupplies.length} supplies, ${errors.length} errors`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Saved ${savedSupplies.length} supply item(s) successfully`,
+      data: savedSupplies,
+      warnings: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error('Error saving office supplies:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete a single office supply
+app.delete('/api/office-supplies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const supply = await OfficeSupply.findByIdAndDelete(id);
+    
+    if (!supply) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Supply item not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Supply item deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get statistics for office supplies
+app.get('/api/office-supplies/stats', async (req, res) => {
+  try {
+    const supplies = await OfficeSupply.find();
+    
+    const totalAmount = supplies.reduce((sum, supply) => sum + supply.price, 0);
+    const totalItems = supplies.length;
+    
+    // Group by payment method
+    const paymentStats = {};
+    supplies.forEach(supply => {
+      const method = supply.paymentMethod;
+      paymentStats[method] = (paymentStats[method] || 0) + supply.price;
+    });
+    
+    // Group by month
+    const monthlyStats = {};
+    supplies.forEach(supply => {
+      const date = new Date(supply.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!monthlyStats[monthYear]) {
+        monthlyStats[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          total: 0,
+          count: 0
+        };
+      }
+      
+      monthlyStats[monthYear].total += supply.price;
+      monthlyStats[monthYear].count += 1;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalAmount,
+        totalItems,
+        avgPerItem: totalItems > 0 ? totalAmount / totalItems : 0,
+        paymentStats,
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+      }
+    });
+  } catch (error) {
+    console.error('Error in office supplies stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+// =============== UPDATE OFFICE SUPPLY ROUTE ===============
+
+// Update single office supply
+app.put('/api/office-supplies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid supply ID format' 
+      });
+    }
+    
+    const { name, date, price, paymentMethod } = req.body;
+    
+    // Validation
+    if (!name || !date || !price) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Name, date, and price are required' 
+      });
+    }
+    
+    const updateData = {
+      name,
+      date: new Date(date),
+      price: parseFloat(price),
+      paymentMethod: paymentMethod || 'Cash',
+      updatedAt: Date.now()
+    };
+    
+    const supply = await OfficeSupply.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+    
+    if (!supply) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Supply item not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Supply item updated successfully',
+      data: supply
+    });
+  } catch (error) {
+    console.error('Error updating supply:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+
+
+// =============== SOFTWARE SUBSCRIPTION ROUTES ===============
+
+// Get all software subscriptions
+app.get('/api/software-subscriptions', async (req, res) => {
+  try {
+    const subscriptions = await SoftwareSubscription.find().sort({ date: -1 });
+    res.json({
+      success: true,
+      count: subscriptions.length,
+      data: subscriptions
+    });
+  } catch (error) {
+    console.error('Error fetching subscriptions:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Add software subscriptions (multiple)
+app.post('/api/software-subscriptions', async (req, res) => {
+  try {
+    console.log('Received subscriptions data:', req.body);
+    
+    const subscriptionsData = req.body;
+    
+    // Validate input is an array
+    if (!Array.isArray(subscriptionsData)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Expected an array of subscriptions' 
+      });
+    }
+    
+    // Process each subscription
+    const savedSubscriptions = [];
+    const errors = [];
+    
+    for (const subData of subscriptionsData) {
+      const { softwareName, amount, date, paymentMethod, note } = subData;
+      
+      // Skip if required fields are empty
+      if (!softwareName || !amount || !date) {
+        errors.push({
+          softwareName: softwareName || 'Unknown',
+          message: 'Software name, amount, and date are required'
+        });
+        continue;
+      }
+      
+      try {
+        const subscription = new SoftwareSubscription({
+          softwareName,
+          amount: parseFloat(amount),
+          date: new Date(date),
+          paymentMethod: paymentMethod || 'Cash',
+          note: note || ''
+        });
+        
+        await subscription.save();
+        savedSubscriptions.push(subscription);
+        console.log(`Saved subscription: ${softwareName}`);
+        
+      } catch (error) {
+        console.error(`Error saving subscription "${softwareName}":`, error);
+        errors.push({
+          softwareName: softwareName,
+          message: `Error saving "${softwareName}": ${error.message}`
+        });
+      }
+    }
+    
+    console.log(`Saved ${savedSubscriptions.length} subscriptions, ${errors.length} errors`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Saved ${savedSubscriptions.length} subscription(s) successfully`,
+      data: savedSubscriptions,
+      warnings: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error('Error saving subscriptions:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Update single subscription
+app.put('/api/software-subscriptions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Updating subscription with ID: ${id}`, req.body);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid subscription ID format' 
+      });
+    }
+    
+    const { softwareName, amount, date, paymentMethod, note } = req.body;
+    
+    // Validation
+    if (!softwareName || !date || !amount) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Software name, date, and amount are required' 
+      });
+    }
+    
+    const updateData = {
+      softwareName,
+      amount: parseFloat(amount),
+      date: new Date(date),
+      paymentMethod: paymentMethod || 'Cash',
+      note: note || '',
+      updatedAt: Date.now()
+    };
+    
+    const subscription = await SoftwareSubscription.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+    
+    if (!subscription) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Subscription not found' 
+      });
+    }
+    
+    console.log(`Successfully updated subscription: ${subscription.softwareName}`);
+    
+    res.json({
+      success: true,
+      message: 'Subscription updated successfully',
+      data: subscription
+    });
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete single subscription
+app.delete('/api/software-subscriptions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Deleting subscription with ID: ${id}`);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid subscription ID format' 
+      });
+    }
+    
+    const subscription = await SoftwareSubscription.findByIdAndDelete(id);
+    
+    if (!subscription) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Subscription not found' 
+      });
+    }
+    
+    console.log(`Successfully deleted subscription: ${subscription.softwareName}`);
+    
+    res.json({
+      success: true,
+      message: 'Subscription deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting subscription:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get statistics for subscriptions
+app.get('/api/software-subscriptions/stats', async (req, res) => {
+  try {
+    const subscriptions = await SoftwareSubscription.find();
+    
+    const totalAmount = subscriptions.reduce((sum, sub) => sum + sub.amount, 0);
+    const totalSubscriptions = subscriptions.length;
+    
+    // Group by software
+    const softwareStats = {};
+    subscriptions.forEach(sub => {
+      const software = sub.softwareName;
+      softwareStats[software] = (softwareStats[software] || 0) + sub.amount;
+    });
+    
+    // Group by month
+    const monthlyStats = {};
+    subscriptions.forEach(sub => {
+      const date = new Date(sub.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!monthlyStats[monthYear]) {
+        monthlyStats[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          total: 0,
+          count: 0
+        };
+      }
+      
+      monthlyStats[monthYear].total += sub.amount;
+      monthlyStats[monthYear].count += 1;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalAmount,
+        totalSubscriptions,
+        avgPerSubscription: totalSubscriptions > 0 ? totalAmount / totalSubscriptions : 0,
+        softwareStats,
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+      }
+    });
+  } catch (error) {
+    console.error('Error in subscription stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
@@ -1135,6 +1957,5 @@ app.listen(PORT, () => {
   console.log(`👥 Employee API: http://localhost:${PORT}/api/employees`);
   console.log(`💰 Office Rent API: http://localhost:${PORT}/api/office-rents`);
   console.log(`💡 Bills API: http://localhost:${PORT}/api/bills`);
-  console.log(`🔧 Fix index: http://localhost:${PORT}/api/fix-index`);
-  console.log(`🧹 Clear all bills: http://localhost:${PORT}/api/bills/clear-all`);
+
 });
