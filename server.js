@@ -91,6 +91,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 });
 
 // Employee Schema
+// Updated Employee Schema with extra fields
 const employeeSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -115,6 +116,21 @@ const employeeSchema = new mongoose.Schema({
   phone: {
     type: String,
     trim: true
+  },
+  // NEW FIELDS
+  paymentMethod: {
+    type: String,
+    enum: ['Bank Transfer', 'Cash', 'Check', 'Mobile Banking', 'Credit Card', 'Debit Card', 'Other'],
+    default: 'Bank Transfer'
+  },
+  notes: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  hireDate: {
+    type: Date,
+    default: Date.now
   },
   dateJoined: {
     type: Date,
@@ -433,7 +449,7 @@ app.post('/api/employees', async (req, res) => {
   try {
     console.log('Received employee data:', req.body);
     
-    const { name, designation, salary, email, phone } = req.body;
+    const { name, designation, salary, email, phone, paymentMethod, notes, hireDate } = req.body;
     
     // Validation
     if (!name || !designation || !salary) {
@@ -448,7 +464,10 @@ app.post('/api/employees', async (req, res) => {
       designation,
       salary: parseFloat(salary),
       email: email || '',
-      phone: phone || ''
+      phone: phone || '',
+      paymentMethod: paymentMethod || 'Bank Transfer',
+      notes: notes || '',
+      hireDate: hireDate ? new Date(hireDate) : new Date()
     });
     
     await employee.save();
@@ -542,7 +561,7 @@ app.put('/api/employees/:id', async (req, res) => {
       });
     }
     
-    const { name, designation, salary, email, phone } = req.body;
+    const { name, designation, salary, email, phone, paymentMethod, notes, hireDate } = req.body;
     
     // Validation
     if (!name || !designation || !salary) {
@@ -557,7 +576,10 @@ app.put('/api/employees/:id', async (req, res) => {
       designation,
       salary: parseFloat(salary),
       email: email || '',
-      phone: phone || ''
+      phone: phone || '',
+      paymentMethod: paymentMethod || 'Bank Transfer',
+      notes: notes || '',
+      hireDate: hireDate ? new Date(hireDate) : new Date()
     };
     
     const employee = await Employee.findByIdAndUpdate(
