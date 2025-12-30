@@ -293,11 +293,109 @@ softwareSubscriptionSchema.pre('save', function(next) {
 });
 
 
+
+// Add this to your server.js after other schemas
+
+// Transport Expense Schema
+const transportExpenseSchema = new mongoose.Schema({
+  transportName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  cost: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Bank Transfer', 'Mobile Banking', 'Card'],
+    required: true
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+
+// Add pre-save middleware
+transportExpenseSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+
+
+// Add this to your server.js after other schemas
+
+// Extra Expense Schema
+const extraExpenseSchema = new mongoose.Schema({
+  expenseName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  date: {
+    type: Date,
+    required: true
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['Cash', 'Card', 'Bank Transfer', 'Mobile Banking'],
+    required: true
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+
+// Add pre-save middleware
+extraExpenseSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+
 const Employee = mongoose.model('Employee', employeeSchema);
 const OfficeRent = mongoose.model('OfficeRent', officeRentSchema);
 const Bill = mongoose.model('Bill', billSchema);
 const OfficeSupply = mongoose.model('OfficeSupply', officeSupplySchema);
 const SoftwareSubscription = mongoose.model('SoftwareSubscription', softwareSubscriptionSchema);
+const TransportExpense = mongoose.model('TransportExpense', transportExpenseSchema);
+const ExtraExpense = mongoose.model('ExtraExpense', extraExpenseSchema);
+
+
 
 
 
@@ -1942,6 +2040,512 @@ app.get('/api/software-subscriptions/stats', async (req, res) => {
     });
   } catch (error) {
     console.error('Error in subscription stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+
+// =============== TRANSPORT EXPENSE ROUTES ===============
+
+// Get all transport expenses
+app.get('/api/transport-expenses', async (req, res) => {
+  try {
+    const expenses = await TransportExpense.find().sort({ date: -1 });
+    res.json({
+      success: true,
+      count: expenses.length,
+      data: expenses
+    });
+  } catch (error) {
+    console.error('Error fetching transport expenses:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Add transport expenses (multiple)
+app.post('/api/transport-expenses', async (req, res) => {
+  try {
+    console.log('Received transport expenses data:', req.body);
+    
+    const expensesData = req.body;
+    
+    // Validate input is an array
+    if (!Array.isArray(expensesData)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Expected an array of transport expenses' 
+      });
+    }
+    
+    // Process each expense
+    const savedExpenses = [];
+    const errors = [];
+    
+    for (const expenseData of expensesData) {
+      const { transportName, cost, date, paymentMethod, note } = expenseData;
+      
+      // Skip if required fields are empty
+      if (!transportName || !cost || !date) {
+        errors.push({
+          transportName: transportName || 'Unknown',
+          message: 'Transport name, cost, and date are required'
+        });
+        continue;
+      }
+      
+      try {
+        const expense = new TransportExpense({
+          transportName,
+          cost: parseFloat(cost),
+          date: new Date(date),
+          paymentMethod: paymentMethod || 'Cash',
+          note: note || ''
+        });
+        
+        await expense.save();
+        savedExpenses.push(expense);
+        console.log(`Saved transport expense: ${transportName}`);
+        
+      } catch (error) {
+        console.error(`Error saving transport expense "${transportName}":`, error);
+        errors.push({
+          transportName: transportName,
+          message: `Error saving "${transportName}": ${error.message}`
+        });
+      }
+    }
+    
+    console.log(`Saved ${savedExpenses.length} transport expenses, ${errors.length} errors`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Saved ${savedExpenses.length} transport expense(s) successfully`,
+      data: savedExpenses,
+      warnings: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error('Error saving transport expenses:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Update single transport expense
+app.put('/api/transport-expenses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Updating transport expense with ID: ${id}`, req.body);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid transport expense ID format' 
+      });
+    }
+    
+    const { transportName, cost, date, paymentMethod, note } = req.body;
+    
+    // Validation
+    if (!transportName || !date || !cost) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Transport name, date, and cost are required' 
+      });
+    }
+    
+    const updateData = {
+      transportName,
+      cost: parseFloat(cost),
+      date: new Date(date),
+      paymentMethod: paymentMethod || 'Cash',
+      note: note || '',
+      updatedAt: Date.now()
+    };
+    
+    const expense = await TransportExpense.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+    
+    if (!expense) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Transport expense not found' 
+      });
+    }
+    
+    console.log(`Successfully updated transport expense: ${expense.transportName}`);
+    
+    res.json({
+      success: true,
+      message: 'Transport expense updated successfully',
+      data: expense
+    });
+  } catch (error) {
+    console.error('Error updating transport expense:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete single transport expense
+app.delete('/api/transport-expenses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Deleting transport expense with ID: ${id}`);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid transport expense ID format' 
+      });
+    }
+    
+    const expense = await TransportExpense.findByIdAndDelete(id);
+    
+    if (!expense) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Transport expense not found' 
+      });
+    }
+    
+    console.log(`Successfully deleted transport expense: ${expense.transportName}`);
+    
+    res.json({
+      success: true,
+      message: 'Transport expense deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting transport expense:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get statistics for transport expenses
+app.get('/api/transport-expenses/stats', async (req, res) => {
+  try {
+    const expenses = await TransportExpense.find();
+    
+    const totalCost = expenses.reduce((sum, expense) => sum + expense.cost, 0);
+    const totalExpenses = expenses.length;
+    
+    // Group by transport type
+    const transportStats = {};
+    expenses.forEach(expense => {
+      const transport = expense.transportName;
+      transportStats[transport] = (transportStats[transport] || 0) + expense.cost;
+    });
+    
+    // Group by month
+    const monthlyStats = {};
+    expenses.forEach(expense => {
+      const date = new Date(expense.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!monthlyStats[monthYear]) {
+        monthlyStats[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          total: 0,
+          count: 0
+        };
+      }
+      
+      monthlyStats[monthYear].total += expense.cost;
+      monthlyStats[monthYear].count += 1;
+    });
+    
+    // Group by payment method
+    const paymentStats = {};
+    expenses.forEach(expense => {
+      const method = expense.paymentMethod;
+      paymentStats[method] = (paymentStats[method] || 0) + expense.cost;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalCost,
+        totalExpenses,
+        avgPerExpense: totalExpenses > 0 ? totalCost / totalExpenses : 0,
+        transportStats,
+        paymentStats,
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+      }
+    });
+  } catch (error) {
+    console.error('Error in transport expense stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+
+
+
+// =============== EXTRA EXPENSE ROUTES ===============
+
+// Get all extra expenses
+app.get('/api/extra-expenses', async (req, res) => {
+  try {
+    const expenses = await ExtraExpense.find().sort({ date: -1 });
+    res.json({
+      success: true,
+      count: expenses.length,
+      data: expenses
+    });
+  } catch (error) {
+    console.error('Error fetching extra expenses:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Add extra expenses (multiple)
+app.post('/api/extra-expenses', async (req, res) => {
+  try {
+    console.log('Received extra expenses data:', req.body);
+    
+    const expensesData = req.body;
+    
+    // Validate input is an array
+    if (!Array.isArray(expensesData)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Expected an array of extra expenses' 
+      });
+    }
+    
+    // Process each expense
+    const savedExpenses = [];
+    const errors = [];
+    
+    for (const expenseData of expensesData) {
+      const { expenseName, amount, date, paymentMethod, note } = expenseData;
+      
+      // Skip if required fields are empty
+      if (!expenseName || !amount || !date) {
+        errors.push({
+          expenseName: expenseName || 'Unknown',
+          message: 'Expense name, amount, and date are required'
+        });
+        continue;
+      }
+      
+      try {
+        const expense = new ExtraExpense({
+          expenseName,
+          amount: parseFloat(amount),
+          date: new Date(date),
+          paymentMethod: paymentMethod || 'Cash',
+          note: note || ''
+        });
+        
+        await expense.save();
+        savedExpenses.push(expense);
+        console.log(`Saved extra expense: ${expenseName}`);
+        
+      } catch (error) {
+        console.error(`Error saving extra expense "${expenseName}":`, error);
+        errors.push({
+          expenseName: expenseName,
+          message: `Error saving "${expenseName}": ${error.message}`
+        });
+      }
+    }
+    
+    console.log(`Saved ${savedExpenses.length} extra expenses, ${errors.length} errors`);
+    
+    res.status(201).json({
+      success: true,
+      message: `Saved ${savedExpenses.length} extra expense(s) successfully`,
+      data: savedExpenses,
+      warnings: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error('Error saving extra expenses:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Update single extra expense
+app.put('/api/extra-expenses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Updating extra expense with ID: ${id}`, req.body);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid extra expense ID format' 
+      });
+    }
+    
+    const { expenseName, amount, date, paymentMethod, note } = req.body;
+    
+    // Validation
+    if (!expenseName || !date || !amount) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Expense name, date, and amount are required' 
+      });
+    }
+    
+    const updateData = {
+      expenseName,
+      amount: parseFloat(amount),
+      date: new Date(date),
+      paymentMethod: paymentMethod || 'Cash',
+      note: note || '',
+      updatedAt: Date.now()
+    };
+    
+    const expense = await ExtraExpense.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+    
+    if (!expense) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Extra expense not found' 
+      });
+    }
+    
+    console.log(`Successfully updated extra expense: ${expense.expenseName}`);
+    
+    res.json({
+      success: true,
+      message: 'Extra expense updated successfully',
+      data: expense
+    });
+  } catch (error) {
+    console.error('Error updating extra expense:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete single extra expense
+app.delete('/api/extra-expenses/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`Deleting extra expense with ID: ${id}`);
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid extra expense ID format' 
+      });
+    }
+    
+    const expense = await ExtraExpense.findByIdAndDelete(id);
+    
+    if (!expense) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Extra expense not found' 
+      });
+    }
+    
+    console.log(`Successfully deleted extra expense: ${expense.expenseName}`);
+    
+    res.json({
+      success: true,
+      message: 'Extra expense deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting extra expense:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get statistics for extra expenses
+app.get('/api/extra-expenses/stats', async (req, res) => {
+  try {
+    const expenses = await ExtraExpense.find();
+    
+    const totalAmount = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+    const totalExpenses = expenses.length;
+    
+    // Group by expense type
+    const expenseStats = {};
+    expenses.forEach(expense => {
+      const expenseType = expense.expenseName;
+      expenseStats[expenseType] = (expenseStats[expenseType] || 0) + expense.amount;
+    });
+    
+    // Group by month
+    const monthlyStats = {};
+    expenses.forEach(expense => {
+      const date = new Date(expense.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!monthlyStats[monthYear]) {
+        monthlyStats[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          total: 0,
+          count: 0
+        };
+      }
+      
+      monthlyStats[monthYear].total += expense.amount;
+      monthlyStats[monthYear].count += 1;
+    });
+    
+    // Group by payment method
+    const paymentStats = {};
+    expenses.forEach(expense => {
+      const method = expense.paymentMethod;
+      paymentStats[method] = (paymentStats[method] || 0) + expense.amount;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalAmount,
+        totalExpenses,
+        avgPerExpense: totalExpenses > 0 ? totalAmount / totalExpenses : 0,
+        expenseStats,
+        paymentStats,
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+      }
+    });
+  } catch (error) {
+    console.error('Error in extra expense stats:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
