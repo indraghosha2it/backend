@@ -257,9 +257,10 @@ const billSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  notes: {
+  note: {
     type: String,
-    trim: true
+    trim: true,
+    default: ''
   },
   createdAt: {
     type: Date,
@@ -288,19 +289,28 @@ const officeRentSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
-  status: {
+paymentMethod: {
     type: String,
-    enum: ['paid', 'unpaid'],
-    default: 'paid'
+    enum: ['cash', 'bank_transfer', 'credit_card', 'debit_card', 'online', 'other'],
+    default: 'cash'
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
   },
   createdAt: {
     type: Date,
-    default: Date.now
+    default: Date.now  
   },
   updatedAt: {
     type: Date,
     default: Date.now
   }
+});
+officeRentSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
 });
 
 // Office Supply Schema
@@ -989,11 +999,12 @@ app.get('/api/office-rents/:id', async (req, res) => {
 });
 
 // Add new office rent
+// Update POST /api/office-rents route
 app.post('/api/office-rents', async (req, res) => {
   try {
     console.log('Received office rent data:', req.body);
     
-    const { date, rent, status } = req.body;
+    const { date, rent, paymentMethod, note } = req.body;
     
     // Validation
     if (!date || !rent) {
@@ -1006,7 +1017,8 @@ app.post('/api/office-rents', async (req, res) => {
     const officeRent = new OfficeRent({
       date: new Date(date),
       rent: parseFloat(rent),
-      status: status || 'paid'
+      paymentMethod: paymentMethod || 'cash',
+      note: note || ''
     });
     
     await officeRent.save();
@@ -1028,6 +1040,7 @@ app.post('/api/office-rents', async (req, res) => {
 });
 
 // Update office rent
+// Update PUT /api/office-rents/:id route
 app.put('/api/office-rents/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1040,7 +1053,7 @@ app.put('/api/office-rents/:id', async (req, res) => {
       });
     }
     
-    const { date, rent, status } = req.body;
+    const { date, rent, paymentMethod, note } = req.body;
     
     // Validation
     if (!date || !rent) {
@@ -1053,7 +1066,8 @@ app.put('/api/office-rents/:id', async (req, res) => {
     const updateData = {
       date: new Date(date),
       rent: parseFloat(rent),
-      status: status || 'paid',
+      paymentMethod: paymentMethod || 'cash',
+      note: note || '',
       updatedAt: Date.now()
     };
     
@@ -1236,7 +1250,7 @@ app.post('/api/bills', async (req, res) => {
     const errors = [];
     
     for (const billData of billsData) {
-      const { name, amount, date, paymentMethod, isFixed } = billData;
+      const { name, amount, date, paymentMethod, isFixed, note } = billData;
       
       // Skip if amount is empty
       if (!amount || amount === '' || amount === '0') continue;
@@ -1272,6 +1286,7 @@ app.post('/api/bills', async (req, res) => {
           year: year,
           paymentMethod: paymentMethod || 'bank_transfer',
           isFixed: isFixed || false,
+           note: note || '',
           paymentStatus: 'paid'
         });
         
@@ -1632,7 +1647,7 @@ app.put('/api/bills/:id', async (req, res) => {
       });
     }
     
-    const { name, amount, date, paymentMethod } = req.body;
+    const { name, amount, date, paymentMethod , note} = req.body;
     
     // Validation
     if (!name || !amount || !date) {
@@ -1669,6 +1684,7 @@ app.put('/api/bills/:id', async (req, res) => {
       month: month,
       year: year,
       paymentMethod: paymentMethod || 'bank_transfer',
+       note: note || '',
       updatedAt: Date.now()
     };
     
@@ -1707,7 +1723,7 @@ app.put('/api/bills/:id', async (req, res) => {
   }
 });
 
-// Update multiple bills for a month (for month editing)
+// Update multiple bills for a month (for month editing) - UPDATED with note field
 app.put('/api/bills/update-month', async (req, res) => {
   try {
     const { monthYear, bills } = req.body;
@@ -1738,7 +1754,7 @@ app.put('/api/bills/update-month', async (req, res) => {
     
     // Process each bill in the update request
     for (const billData of bills) {
-      const { name, amount, date, paymentMethod, _id } = billData;
+      const { name, amount, date, paymentMethod, note, _id } = billData; // ADD note here
       
       try {
         // Skip if amount is empty
@@ -1767,6 +1783,7 @@ app.put('/api/bills/update-month', async (req, res) => {
             amount: parseFloat(amount),
             date: date ? new Date(date) : new Date(),
             paymentMethod: paymentMethod || 'bank_transfer',
+            note: note || '', // ADD note field here
             updatedAt: Date.now()
           };
           
@@ -1806,6 +1823,7 @@ app.put('/api/bills/update-month', async (req, res) => {
             month: billMonth,
             year: billYear,
             paymentMethod: paymentMethod || 'bank_transfer',
+            note: note || '', // ADD note field here
             isFixed: ["Electricity Bill", "Water Bill", "Internet Bill", "Gas Bill"].includes(name)
           });
           
