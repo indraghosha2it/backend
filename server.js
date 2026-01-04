@@ -92,6 +92,9 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 // Employee Schema
 // Updated Employee Schema with extra fields
+// Updated Employee Schema with extra fields - NO UNIQUE CONSTRAINT
+// Update your employee schema - Remove virtuals that cause indexing issues
+// Updated Employee Schema with salaryMonth and salaryYear
 const employeeSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -108,16 +111,23 @@ const employeeSchema = new mongoose.Schema({
     required: true,
     min: 0
   },
-  email: {
-    type: String,
-    trim: true,
-    lowercase: true
+  workingDays: {
+    type: Number,
+    required: true,
+    default: 26,
+    min: 20,
+    max: 31
   },
-  phone: {
-    type: String,
-    trim: true
+  absentDays: {
+    type: Number,
+    required: true,
+    default: 0,
+    min: 0
   },
-  // NEW FIELDS
+  calculatedSalary: {
+    type: Number,
+    default: 0
+  },
   paymentMethod: {
     type: String,
     enum: ['Bank Transfer', 'Cash', 'Check', 'Mobile Banking', 'Credit Card', 'Debit Card', 'Other'],
@@ -128,9 +138,19 @@ const employeeSchema = new mongoose.Schema({
     trim: true,
     default: ''
   },
-  hireDate: {
+  salaryDate: {
     type: Date,
+    required: true, 
     default: Date.now
+  },
+  // Add these fields
+  salaryMonth: {
+    type: Number,
+    required: true
+  },
+  salaryYear: {
+    type: Number,
+    required: true
   },
   dateJoined: {
     type: Date,
@@ -140,8 +160,63 @@ const employeeSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   }
+}, {
+  toObject: { virtuals: false },
+  toJSON: { virtuals: false }
 });
 
+// Add unique compound index
+employeeSchema.index({ name: 1, salaryMonth: 1, salaryYear: 1 }, { 
+  unique: true,
+  name: 'employee_monthly_salary_unique'
+});
+
+// Updated pre-save middleware
+employeeSchema.pre('save', function(next) {
+  // Extract month and year from salaryDate
+  if (this.salaryDate) {
+    const date = new Date(this.salaryDate);
+    this.salaryMonth = date.getMonth() + 1; // 1-12
+    this.salaryYear = date.getFullYear();
+  }
+  
+  // Calculate salary
+  if (this.salary && this.workingDays && this.absentDays !== undefined) {
+    const perDaySalary = this.salary / this.workingDays;
+    const deduction = perDaySalary * this.absentDays;
+    this.calculatedSalary = Math.max(0, this.salary - deduction);
+  } else {
+    this.calculatedSalary = this.salary || 0;
+  }
+  
+  next();
+});
+
+// Update pre-update middleware for findByIdAndUpdate
+employeeSchema.pre('findOneAndUpdate', function(next) {
+  const update = this.getUpdate();
+  
+  if (update.salaryDate) {
+    const date = new Date(update.salaryDate);
+    update.salaryMonth = date.getMonth() + 1;
+    update.salaryYear = date.getFullYear();
+  }
+  
+  // If salary is being updated, recalculate
+  if (update.salary !== undefined || update.workingDays !== undefined || update.absentDays !== undefined) {
+    const salary = update.salary || this._update.salary;
+    const workingDays = update.workingDays || this._update.workingDays;
+    const absentDays = update.absentDays || this._update.absentDays;
+    
+    if (salary && workingDays && absentDays !== undefined) {
+      const perDaySalary = salary / workingDays;
+      const deduction = perDaySalary * absentDays;
+      update.calculatedSalary = Math.max(0, salary - deduction);
+    }
+  }
+  
+  next();
+});
 // =============== BILL/UTILITIES SCHEMA ===============
 const billSchema = new mongoose.Schema({
   name: {
@@ -445,17 +520,45 @@ app.get('/api/employees', async (req, res) => {
 });
 
 // Add new employee
+// Add new employee - UPDATED VERSION
+// Add new employee - With detailed error logging
+// Clean version - this should work now
+// Add new employee - UPDATED with duplicate check
+// Add new employee - FIXED VERSION
 app.post('/api/employees', async (req, res) => {
   try {
     console.log('Received employee data:', req.body);
     
-    const { name, designation, salary, email, phone, paymentMethod, notes, hireDate } = req.body;
+    const { name, designation, salary, workingDays, absentDays, paymentMethod, notes, salaryDate } = req.body;
     
     // Validation
-    if (!name || !designation || !salary) {
+    if (!name || !designation || !salary || !salaryDate) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Name, designation, and salary are required' 
+        message: 'Name, designation, salary, and salary date are required' 
+      });
+    }
+    
+    // Parse the salary date to get month and year
+    const salaryDateObj = new Date(salaryDate);
+    const salaryMonth = salaryDateObj.getMonth() + 1; // 1-12
+    const salaryYear = salaryDateObj.getFullYear();
+    
+    console.log('Checking for duplicate:', { name, salaryMonth, salaryYear });
+    
+    // Check if employee already has salary for this month-year
+    const existingEmployee = await Employee.findOne({
+      name: name,
+      salaryMonth: salaryMonth,
+      salaryYear: salaryYear
+    });
+    
+    if (existingEmployee) {
+      const monthName = salaryDateObj.toLocaleString('default', { month: 'long' });
+      return res.status(400).json({
+        success: false,
+        message: `Employee "${name}" already has salary data for ${monthName} ${salaryYear}. Please update the existing entry instead.`,
+        existingData: existingEmployee
       });
     }
     
@@ -463,11 +566,14 @@ app.post('/api/employees', async (req, res) => {
       name,
       designation,
       salary: parseFloat(salary),
-      email: email || '',
-      phone: phone || '',
+      workingDays: parseInt(workingDays) || 26,
+      absentDays: parseInt(absentDays) || 0,
       paymentMethod: paymentMethod || 'Bank Transfer',
       notes: notes || '',
-      hireDate: hireDate ? new Date(hireDate) : new Date()
+      salaryDate: salaryDateObj,
+      // These will also be set by pre-save middleware, but set them here too
+      salaryMonth: salaryMonth,
+      salaryYear: salaryYear
     });
     
     await employee.save();
@@ -476,11 +582,33 @@ app.post('/api/employees', async (req, res) => {
     
     res.status(201).json({
       success: true,
-      message: 'Employee added successfully',
+      message: 'Employee salary added successfully',
       data: employee
     });
   } catch (error) {
     console.error('Error saving employee:', error);
+    
+    // Handle duplicate key error (unique constraint violation)
+    if (error.code === 11000) {
+      const monthName = new Date(req.body.salaryDate).toLocaleString('default', { month: 'long' });
+      const year = new Date(req.body.salaryDate).getFullYear();
+      
+      return res.status(400).json({
+        success: false,
+        message: `Employee "${req.body.name}" already has salary data for ${monthName} ${year}. Please update the existing entry instead.`
+      });
+    }
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: messages
+      });
+    }
+    
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -488,6 +616,70 @@ app.post('/api/employees', async (req, res) => {
   }
 });
 
+// =============== DEBUGGING ROUTES ===============
+
+
+
+// 4. Quick fix: Temporary POST route that works around the index
+app.post('/api/employees-temp-fix', async (req, res) => {
+  try {
+    console.log('🔧 Using temporary fix route');
+    
+    const { name, designation, salary, workingDays, absentDays, paymentMethod, notes, salaryDate } = req.body;
+    
+    if (!name || !designation || !salary) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Name, designation, and salary are required' 
+      });
+    }
+    
+    // Use direct MongoDB insertion to bypass Mongoose
+    const collection = mongoose.connection.collection('employees');
+    
+    const employeeData = {
+      name,
+      designation,
+      salary: parseFloat(salary),
+      workingDays: parseInt(workingDays) || 26,
+      absentDays: parseInt(absentDays) || 0,
+      paymentMethod: paymentMethod || 'Bank Transfer',
+      notes: notes || '',
+      salaryDate: salaryDate ? new Date(salaryDate) : new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    
+    console.log('📝 Inserting directly to MongoDB:', employeeData);
+    
+    const result = await collection.insertOne(employeeData);
+    
+    console.log('✅ Insert successful, ID:', result.insertedId);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Employee added successfully (using direct insert)',
+      data: { ...employeeData, _id: result.insertedId }
+    });
+  } catch (error) {
+    console.error('❌ Direct insert error:', error);
+    
+    if (error.code === 11000) {
+      // Even direct insert failed, the index definitely exists
+      return res.status(400).json({
+        success: false,
+        message: 'STILL getting duplicate error! The index must be manually removed.',
+        error: error.message,
+        suggestion: 'Visit /api/drop-employee-unique-index to remove the index'
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 // Delete employee
 app.delete('/api/employees/:id', async (req, res) => {
   try {
@@ -549,6 +741,8 @@ app.get('/api/employees/:id', async (req, res) => {
 });
 
 // Update employee
+// Update employee - UPDATED VERSION
+// Update employee - UPDATED
 app.put('/api/employees/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -561,13 +755,34 @@ app.put('/api/employees/:id', async (req, res) => {
       });
     }
     
-    const { name, designation, salary, email, phone, paymentMethod, notes, hireDate } = req.body;
+    const { name, designation, salary, workingDays, absentDays, paymentMethod, notes, salaryDate } = req.body;
     
     // Validation
-    if (!name || !designation || !salary) {
+    if (!name || !designation || !salary || !salaryDate) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Name, designation, and salary are required' 
+        message: 'Name, designation, salary, and salary date are required' 
+      });
+    }
+    
+    // Parse the salary date to get month and year
+    const salaryDateObj = new Date(salaryDate);
+    const salaryMonth = salaryDateObj.getMonth() + 1;
+    const salaryYear = salaryDateObj.getFullYear();
+    
+    // Check if another employee with same name has salary for this month-year
+    const existingEmployee = await Employee.findOne({
+      _id: { $ne: id }, // Exclude current employee
+      name: name,
+      salaryMonth: salaryMonth,
+      salaryYear: salaryYear
+    });
+    
+    if (existingEmployee) {
+      const monthName = salaryDateObj.toLocaleString('default', { month: 'long' });
+      return res.status(400).json({
+        success: false,
+        message: `Another entry for "${name}" already exists for ${monthName} ${salaryYear}.`
       });
     }
     
@@ -575,11 +790,12 @@ app.put('/api/employees/:id', async (req, res) => {
       name,
       designation,
       salary: parseFloat(salary),
-      email: email || '',
-      phone: phone || '',
+      workingDays: parseInt(workingDays) || 26,
+      absentDays: parseInt(absentDays) || 0,
       paymentMethod: paymentMethod || 'Bank Transfer',
       notes: notes || '',
-      hireDate: hireDate ? new Date(hireDate) : new Date()
+      salaryDate: salaryDateObj
+      // salaryMonth and salaryYear will be updated by pre-save middleware
     };
     
     const employee = await Employee.findByIdAndUpdate(
@@ -597,11 +813,121 @@ app.put('/api/employees/:id', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Employee updated successfully',
+      message: 'Employee salary updated successfully',
       data: employee
     });
   } catch (error) {
     console.error('Error updating employee:', error);
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      const monthName = new Date(req.body.salaryDate).toLocaleString('default', { month: 'long' });
+      const year = new Date(req.body.salaryDate).getFullYear();
+      
+      return res.status(400).json({
+        success: false,
+        message: `Cannot update: Another entry for "${req.body.name}" already exists for ${monthName} ${year}.`
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Check if employee already has salary for a specific month
+// Check if employee already has salary for a specific month - FIXED VERSION
+app.get('/api/employees/check-duplicate', async (req, res) => {
+  try {
+    const { name, salaryDate } = req.query;
+    
+    console.log('Checking duplicate for:', { name, salaryDate });
+    
+    if (!name || !salaryDate) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Name and salaryDate query parameters are required' 
+      });
+    }
+    
+    // Parse the date to get month and year
+    const date = new Date(salaryDate);
+    if (isNaN(date.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid salaryDate format' 
+      });
+    }
+    
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear();
+    
+    console.log('Looking for:', { name, month, year });
+    
+    const existingEmployee = await Employee.findOne({
+      name: name,
+      salaryMonth: month,
+      salaryYear: year
+    });
+    
+    if (existingEmployee) {
+      const monthName = date.toLocaleString('default', { month: 'long' });
+      return res.json({
+        success: true,
+        exists: true,
+        message: `Employee "${name}" already has salary data for ${monthName} ${year}`,
+        data: existingEmployee
+      });
+    }
+    
+    res.json({
+      success: true,
+      exists: false,
+      message: 'No duplicate found'
+    });
+  } catch (error) {
+    console.error('Error checking duplicate:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+// Add this route to migrate existing data
+// Migration route for existing data
+app.get('/api/migrate-employees-fix', async (req, res) => {
+  try {
+    const employees = await Employee.find({ 
+      $or: [
+        { salaryMonth: { $exists: false } },
+        { salaryYear: { $exists: false } }
+      ]
+    });
+    
+    let updatedCount = 0;
+    let errors = [];
+    
+    for (const employee of employees) {
+      try {
+        const date = new Date(employee.salaryDate);
+        employee.salaryMonth = date.getMonth() + 1;
+        employee.salaryYear = date.getFullYear();
+        await employee.save();
+        updatedCount++;
+        console.log(`Updated employee: ${employee.name} - ${employee.salaryMonth}/${employee.salaryYear}`);
+      } catch (error) {
+        errors.push({ employee: employee.name, error: error.message });
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: `Updated ${updatedCount} employees with month/year fields`,
+      errors: errors.length > 0 ? errors : null
+    });
+  } catch (error) {
     res.status(500).json({ 
       success: false, 
       error: error.message 
