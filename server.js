@@ -3,14 +3,44 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const app = express();
+// const corsOptions = {
+//   origin: 'http://localhost:3002', // or use an array for multiple origins
+//   credentials: true, // This is important!
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization']
+// };
+const allowedOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3003'];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
+};
+
+
 
 // Middleware
-app.use(cors());
+// app.use(cors({
+//   origin: '*', // Your Next.js frontend
+//   credentials: true // Allow cookies
+// }));
+app.use(cors(corsOptions));
 app.use(express.json());
+app.use(cookieParser());
+
+// JWT Secret - Add to your .env file
+const JWT_SECRET = process.env.JWT_SECRET;
 
 // Connect to MongoDB Atlas
 mongoose.connect(process.env.MONGODB_URI, {
@@ -22,6 +52,289 @@ mongoose.connect(process.env.MONGODB_URI, {
   console.error('❌ MongoDB Connection Error:', err.message);
   console.log('🔧 Check your MONGODB_URI in .env file');
 });
+
+
+
+// =============== USER SCHEMA & MODEL ===============
+
+// Add this after your other schemas, before routes
+const userSchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  password: {
+    type: String,
+    required: true
+  },
+  role: {
+    type: String,
+    enum: ['admin', 'moderator', 'user'],
+    default: 'user'
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Hash password before saving
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Compare password method
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+const User = mongoose.model('User', userSchema);
+
+// =============== AUTH MIDDLEWARE ===============
+
+// Middleware to verify JWT token and check roles
+const requireAuth = (allowedRoles = []) => {
+  return async (req, res, next) => {
+    try {
+      // Get token from cookies or Authorization header
+      const token = req.cookies.auth_token || req.headers.authorization?.split(' ')[1];
+      
+      if (!token) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Authentication required' 
+        });
+      }
+      
+      // Verify JWT token
+      const decoded = jwt.verify(token, JWT_SECRET);
+      
+      // Find user in database to verify they still exist and get role
+      const user = await User.findById(decoded.userId).select('-password');
+      
+      if (!user) {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'User not found' 
+        });
+      }
+      
+      // Check if user's role is in allowedRoles
+      if (allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: 'Insufficient permissions' 
+        });
+      }
+      
+      // Attach user to request object
+      req.user = user;
+      next();
+      
+    } catch (error) {
+      console.error('Auth middleware error:', error);
+      
+      if (error.name === 'JsonWebTokenError') {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Invalid token' 
+        });
+      }
+      
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ 
+          success: false, 
+          message: 'Token expired' 
+        });
+      }
+      
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Server error' 
+      });
+    }
+  };
+};
+
+// =============== AUTH ROUTES ===============
+
+// User registration (admin only)
+app.post('/api/auth/register', requireAuth(['admin']), async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+    
+    // Validation
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and password are required'
+      });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+    
+    // Create new user
+    const user = new User({
+      name,
+      email,
+      password,
+      role: role || 'user'
+    });
+    
+    await user.save();
+    
+    // Remove password from response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      data: userResponse
+    });
+    
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during registration'
+    });
+  }
+});
+
+// User login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    // Validation
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+    
+    // Find user
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+    
+    // Check password
+    const isPasswordValid = await user.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        email: user.email,
+        role: user.role,
+        name: user.name
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Remove password from user object
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    
+    // Set cookie
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      path: '/'
+    });
+    
+    res.json({
+      success: true,
+      message: 'Login successful',
+      data: userResponse,
+      token // Also send token in response for client-side storage
+    });
+    
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error during login'
+    });
+  }
+});
+
+// Get current user info
+app.get('/api/auth/me', requireAuth([]), async (req, res) => {
+  try {
+    res.json({
+      success: true,
+      data: req.user
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error'
+    });
+  }
+});
+
+// Logout
+app.post('/api/auth/logout', (req, res) => {
+  // Clear the auth cookie
+  res.clearCookie('auth_token', {
+    path: '/'
+  });
+  
+  res.json({
+    success: true,
+    message: 'Logged out successfully'
+  });
+});
+
+
 
 // Employee Schema
 // Updated Employee Schema with extra fields
@@ -446,7 +759,7 @@ app.get('/api/health', (req, res) => {
 // =============== EMPLOYEE ROUTES ===============
 
 // Get all employees
-app.get('/api/employees', async (req, res) => {
+app.get('/api/employees', requireAuth(['admin']), async (req, res) => {
   try {
     const employees = await Employee.find().sort({ dateJoined: -1 });
     res.json({
@@ -468,7 +781,7 @@ app.get('/api/employees', async (req, res) => {
 // Clean version - this should work now
 // Add new employee - UPDATED with duplicate check
 // Add new employee - FIXED VERSION
-app.post('/api/employees', async (req, res) => {
+app.post('/api/employees',requireAuth(['admin']), async (req, res) => {
   try {
     console.log('Received employee data:', req.body);
     
@@ -564,7 +877,7 @@ app.post('/api/employees', async (req, res) => {
 
 
 // 4. Quick fix: Temporary POST route that works around the index
-app.post('/api/employees-temp-fix', async (req, res) => {
+app.post('/api/employees-temp-fix', requireAuth(['admin']), async (req, res) => {
   try {
     console.log('🔧 Using temporary fix route');
     
@@ -624,7 +937,7 @@ app.post('/api/employees-temp-fix', async (req, res) => {
   }
 });
 // Delete employee
-app.delete('/api/employees/:id', async (req, res) => {
+app.delete('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -650,7 +963,7 @@ app.delete('/api/employees/:id', async (req, res) => {
 });
 
 // Get single employee by ID
-app.get('/api/employees/:id', async (req, res) => {
+app.get('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -686,7 +999,7 @@ app.get('/api/employees/:id', async (req, res) => {
 // Update employee
 // Update employee - UPDATED VERSION
 // Update employee - UPDATED
-app.put('/api/employees/:id', async (req, res) => {
+app.put('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -782,7 +1095,7 @@ app.put('/api/employees/:id', async (req, res) => {
 
 // Check if employee already has salary for a specific month
 // Check if employee already has salary for a specific month - FIXED VERSION
-app.get('/api/employees/check-duplicate', async (req, res) => {
+app.get('/api/employees/check-duplicate', requireAuth(['admin']), async (req, res) => {
   try {
     const { name, salaryDate } = req.query;
     
@@ -840,7 +1153,7 @@ app.get('/api/employees/check-duplicate', async (req, res) => {
 });
 // Add this route to migrate existing data
 // Migration route for existing data
-app.get('/api/migrate-employees-fix', async (req, res) => {
+app.get('/api/migrate-employees-fix', requireAuth(['admin']), async (req, res) => {
   try {
     const employees = await Employee.find({ 
       $or: [
@@ -881,7 +1194,7 @@ app.get('/api/migrate-employees-fix', async (req, res) => {
 // =============== OFFICE RENT ROUTES ===============
 
 // Get all office rents
-app.get('/api/office-rents', async (req, res) => {
+app.get('/api/office-rents', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const rents = await OfficeRent.find().sort({ date: -1 });
     res.json({
@@ -898,7 +1211,7 @@ app.get('/api/office-rents', async (req, res) => {
 });
 
 // Get single office rent by ID
-app.get('/api/office-rents/:id', async (req, res) => {
+app.get('/api/office-rents/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -933,7 +1246,7 @@ app.get('/api/office-rents/:id', async (req, res) => {
 
 // Add new office rent
 // Update POST /api/office-rents route
-app.post('/api/office-rents', async (req, res) => {
+app.post('/api/office-rents', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received office rent data:', req.body);
     
@@ -974,7 +1287,7 @@ app.post('/api/office-rents', async (req, res) => {
 
 // Update office rent
 // Update PUT /api/office-rents/:id route
-app.put('/api/office-rents/:id', async (req, res) => {
+app.put('/api/office-rents/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1032,7 +1345,7 @@ app.put('/api/office-rents/:id', async (req, res) => {
 });
 
 // Delete office rent
-app.delete('/api/office-rents/:id', async (req, res) => {
+app.delete('/api/office-rents/:id',  requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1113,7 +1426,7 @@ app.delete('/api/office-rents/:id', async (req, res) => {
 // =============== BILL ROUTES ===============
 
 // Get all bills
-app.get('/api/bills', async (req, res) => {
+app.get('/api/bills', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const bills = await Bill.find().sort({ date: -1 });
     res.json({
@@ -1130,7 +1443,7 @@ app.get('/api/bills', async (req, res) => {
 });
 
 // Get bill by ID
-app.get('/api/bills/:id', async (req, res) => {
+app.get('/api/bills/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1164,7 +1477,7 @@ app.get('/api/bills/:id', async (req, res) => {
 
 // Add new bills (multiple)
 // Add new bills (multiple) - UPDATED VERSION
-app.post('/api/bills', async (req, res) => {
+app.post('/api/bills', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received bills data:', req.body);
     
@@ -1271,56 +1584,56 @@ app.post('/api/bills', async (req, res) => {
 });
 
 // Get bills grouped by month
-app.get('/api/bills/by-month', async (req, res) => {
-  try {
-    const bills = await Bill.find().sort({ date: 1 });
+// app.get('/api/bills/by-month', requireAuth(['admin', 'moderator']), async (req, res) => {
+//   try {
+//     const bills = await Bill.find().sort({ date: 1 });
     
-    // Group bills by month-year
-    const billsByMonth = {};
+//     // Group bills by month-year
+//     const billsByMonth = {};
     
-    bills.forEach(bill => {
-      const date = new Date(bill.date);
-      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+//     bills.forEach(bill => {
+//       const date = new Date(bill.date);
+//       const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+//       const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
       
-      if (!billsByMonth[monthYear]) {
-        billsByMonth[monthYear] = {
-          month: monthYear,
-          monthName: monthName,
-          total: 0,
-          bills: [],
-          billTypes: {}
-        };
-      }
+//       if (!billsByMonth[monthYear]) {
+//         billsByMonth[monthYear] = {
+//           month: monthYear,
+//           monthName: monthName,
+//           total: 0,
+//           bills: [],
+//           billTypes: {}
+//         };
+//       }
       
-      billsByMonth[monthYear].total += bill.amount;
-      billsByMonth[monthYear].bills.push(bill);
+//       billsByMonth[monthYear].total += bill.amount;
+//       billsByMonth[monthYear].bills.push(bill);
       
-      // Group by bill type
-      if (!billsByMonth[monthYear].billTypes[bill.name]) {
-        billsByMonth[monthYear].billTypes[bill.name] = 0;
-      }
-      billsByMonth[monthYear].billTypes[bill.name] += bill.amount;
-    });
+//       // Group by bill type
+//       if (!billsByMonth[monthYear].billTypes[bill.name]) {
+//         billsByMonth[monthYear].billTypes[bill.name] = 0;
+//       }
+//       billsByMonth[monthYear].billTypes[bill.name] += bill.amount;
+//     });
     
-    // Convert to array and sort by month
-    const result = Object.values(billsByMonth).sort((a, b) => b.month.localeCompare(a.month));
+//     // Convert to array and sort by month
+//     const result = Object.values(billsByMonth).sort((a, b) => b.month.localeCompare(a.month));
     
-    res.json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    console.error('Error grouping bills by month:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
+//     res.json({
+//       success: true,
+//       data: result
+//     });
+//   } catch (error) {
+//     console.error('Error grouping bills by month:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       error: error.message 
+//     });
+//   }
+// });
 
 // Get all unique bill types (for table columns)
-app.get('/api/bills/types', async (req, res) => {
+app.get('/api/bills/types', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const billTypes = await Bill.distinct('name');
     res.json({
@@ -1336,7 +1649,7 @@ app.get('/api/bills/types', async (req, res) => {
 });
 
 // Delete bill
-app.delete('/api/bills/:id', async (req, res) => {
+app.delete('/api/bills/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1362,7 +1675,7 @@ app.delete('/api/bills/:id', async (req, res) => {
 });
 
 // Get total statistics
-app.get('/api/bills/stats', async (req, res) => {
+app.get('/api/bills/stats', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const bills = await Bill.find();
     
@@ -1410,7 +1723,7 @@ app.get('/api/bills/stats', async (req, res) => {
 // Get bills grouped by month
 // Get bills grouped by month - FIXED VERSION
 // Get bills grouped by month - SIMPLIFIED VERSION
-app.get('/api/bills/by-month', async (req, res) => {
+app.get('/api/bills/by-month', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const bills = await Bill.find().sort({ date: -1 });
     
@@ -1466,7 +1779,7 @@ app.get('/api/bills/by-month', async (req, res) => {
 // Get all unique bill types (for table columns)
 // Get all unique bill types (for table columns) - FIXED VERSION
 // Get all unique bill types
-app.get('/api/bills/types', async (req, res) => {
+app.get('/api/bills/types', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const billTypes = await Bill.distinct('name');
     
@@ -1492,7 +1805,7 @@ app.get('/api/bills/types', async (req, res) => {
 });
 
 // Delete bill
-app.delete('/api/bills/:id', async (req, res) => {
+app.delete('/api/bills/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1519,7 +1832,7 @@ app.delete('/api/bills/:id', async (req, res) => {
 
 // Get total statistics
 // Get total statistics
-app.get('/api/bills/stats', async (req, res) => {
+app.get('/api/bills/stats', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const bills = await Bill.find();
     
@@ -1545,7 +1858,7 @@ app.get('/api/bills/stats', async (req, res) => {
 // =============== EDIT/UPDATE ROUTES ===============
 
 // Get bills by specific month-year
-app.get('/api/bills/month/:year/:month', async (req, res) => {
+app.get('/api/bills/month/:year/:month', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { year, month } = req.params;
     
@@ -1569,7 +1882,7 @@ app.get('/api/bills/month/:year/:month', async (req, res) => {
 });
 
 // Update single bill
-app.put('/api/bills/:id', async (req, res) => {
+app.put('/api/bills/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1657,7 +1970,7 @@ app.put('/api/bills/:id', async (req, res) => {
 });
 
 // Update multiple bills for a month (for month editing) - UPDATED with note field
-app.put('/api/bills/update-month', async (req, res) => {
+app.put('/api/bills/update-month', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { monthYear, bills } = req.body;
     
@@ -1803,7 +2116,7 @@ app.put('/api/bills/update-month', async (req, res) => {
 });
 
 // Delete all bills for a specific month
-app.delete('/api/bills/month/:year/:month', async (req, res) => {
+app.delete('/api/bills/month/:year/:month', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { year, month } = req.params;
     
@@ -1835,7 +2148,7 @@ billSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
-app.get('/api/fix-index', async (req, res) => {
+app.get('/api/fix-index', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const collection = mongoose.connection.collection('bills');
     await collection.dropIndex("name_1_month_1_year_1");
@@ -1845,7 +2158,7 @@ app.get('/api/fix-index', async (req, res) => {
   }
 });
 // Add this route to REMOVE the problematic index
-app.get('/api/remove-duplicate-index', async (req, res) => {
+app.get('/api/remove-duplicate-index', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const collection = mongoose.connection.collection('bills');
     
@@ -1879,7 +2192,7 @@ app.get('/api/remove-duplicate-index', async (req, res) => {
 // =============== OFFICE SUPPLY ROUTES ===============
 
 // Get all office supplies
-app.get('/api/office-supplies', async (req, res) => {
+app.get('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const supplies = await OfficeSupply.find().sort({ date: -1 });
     res.json({
@@ -1896,7 +2209,7 @@ app.get('/api/office-supplies', async (req, res) => {
 });
 
 // Add office supplies (multiple)
-app.post('/api/office-supplies', async (req, res) => {
+app.post('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received office supplies data:', req.body);
     
@@ -1964,7 +2277,7 @@ app.post('/api/office-supplies', async (req, res) => {
 });
 
 // Delete a single office supply
-app.delete('/api/office-supplies/:id', async (req, res) => {
+app.delete('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1990,7 +2303,7 @@ app.delete('/api/office-supplies/:id', async (req, res) => {
 });
 
 // Get statistics for office supplies
-app.get('/api/office-supplies/stats', async (req, res) => {
+app.get('/api/office-supplies/stats', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const supplies = await OfficeSupply.find();
     
@@ -2045,7 +2358,7 @@ app.get('/api/office-supplies/stats', async (req, res) => {
 // =============== UPDATE OFFICE SUPPLY ROUTE ===============
 
 // Update single office supply
-app.put('/api/office-supplies/:id', async (req, res) => {
+app.put('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -2106,7 +2419,7 @@ app.put('/api/office-supplies/:id', async (req, res) => {
 // =============== SOFTWARE SUBSCRIPTION ROUTES ===============
 
 // Get all software subscriptions
-app.get('/api/software-subscriptions', async (req, res) => {
+app.get('/api/software-subscriptions', requireAuth(['admin']),  async (req, res) => {
   try {
     const subscriptions = await SoftwareSubscription.find().sort({ date: -1 });
     res.json({
@@ -2124,7 +2437,7 @@ app.get('/api/software-subscriptions', async (req, res) => {
 });
 
 // Add software subscriptions (multiple)
-app.post('/api/software-subscriptions', async (req, res) => {
+app.post('/api/software-subscriptions', requireAuth(['admin']),  async (req, res) => {
   try {
     console.log('Received subscriptions data:', req.body);
     
@@ -2195,7 +2508,7 @@ app.post('/api/software-subscriptions', async (req, res) => {
 });
 
 // Update single subscription
-app.put('/api/software-subscriptions/:id', async (req, res) => {
+app.put('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Updating subscription with ID: ${id}`, req.body);
@@ -2256,7 +2569,7 @@ app.put('/api/software-subscriptions/:id', async (req, res) => {
 });
 
 // Delete single subscription
-app.delete('/api/software-subscriptions/:id', async (req, res) => {
+app.delete('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Deleting subscription with ID: ${id}`);
@@ -2293,7 +2606,7 @@ app.delete('/api/software-subscriptions/:id', async (req, res) => {
 });
 
 // Get statistics for subscriptions
-app.get('/api/software-subscriptions/stats', async (req, res) => {
+app.get('/api/software-subscriptions/stats', requireAuth(['admin']),  async (req, res) => {
   try {
     const subscriptions = await SoftwareSubscription.find();
     
@@ -2350,7 +2663,7 @@ app.get('/api/software-subscriptions/stats', async (req, res) => {
 // =============== TRANSPORT EXPENSE ROUTES ===============
 
 // Get all transport expenses
-app.get('/api/transport-expenses', async (req, res) => {
+app.get('/api/transport-expenses',requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const expenses = await TransportExpense.find().sort({ date: -1 });
     res.json({
@@ -2368,7 +2681,7 @@ app.get('/api/transport-expenses', async (req, res) => {
 });
 
 // Add transport expenses (multiple)
-app.post('/api/transport-expenses', async (req, res) => {
+app.post('/api/transport-expenses', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received transport expenses data:', req.body);
     
@@ -2439,7 +2752,7 @@ app.post('/api/transport-expenses', async (req, res) => {
 });
 
 // Update single transport expense
-app.put('/api/transport-expenses/:id', async (req, res) => {
+app.put('/api/transport-expenses/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Updating transport expense with ID: ${id}`, req.body);
@@ -2500,7 +2813,7 @@ app.put('/api/transport-expenses/:id', async (req, res) => {
 });
 
 // Delete single transport expense
-app.delete('/api/transport-expenses/:id', async (req, res) => {
+app.delete('/api/transport-expenses/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Deleting transport expense with ID: ${id}`);
@@ -2537,7 +2850,7 @@ app.delete('/api/transport-expenses/:id', async (req, res) => {
 });
 
 // Get statistics for transport expenses
-app.get('/api/transport-expenses/stats', async (req, res) => {
+app.get('/api/transport-expenses/stats', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const expenses = await TransportExpense.find();
     
@@ -2604,7 +2917,7 @@ app.get('/api/transport-expenses/stats', async (req, res) => {
 // =============== EXTRA EXPENSE ROUTES ===============
 
 // Get all extra expenses
-app.get('/api/extra-expenses', async (req, res) => {
+app.get('/api/extra-expenses', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const expenses = await ExtraExpense.find().sort({ date: -1 });
     res.json({
@@ -2622,7 +2935,7 @@ app.get('/api/extra-expenses', async (req, res) => {
 });
 
 // Add extra expenses (multiple)
-app.post('/api/extra-expenses', async (req, res) => {
+app.post('/api/extra-expenses', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received extra expenses data:', req.body);
     
@@ -2693,7 +3006,7 @@ app.post('/api/extra-expenses', async (req, res) => {
 });
 
 // Update single extra expense
-app.put('/api/extra-expenses/:id', async (req, res) => {
+app.put('/api/extra-expenses/:id',requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Updating extra expense with ID: ${id}`, req.body);
@@ -2754,7 +3067,7 @@ app.put('/api/extra-expenses/:id', async (req, res) => {
 });
 
 // Delete single extra expense
-app.delete('/api/extra-expenses/:id', async (req, res) => {
+app.delete('/api/extra-expenses/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Deleting extra expense with ID: ${id}`);
@@ -2791,7 +3104,7 @@ app.delete('/api/extra-expenses/:id', async (req, res) => {
 });
 
 // Get statistics for extra expenses
-app.get('/api/extra-expenses/stats', async (req, res) => {
+app.get('/api/extra-expenses/stats', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const expenses = await ExtraExpense.find();
     
@@ -2851,14 +3164,76 @@ app.get('/api/extra-expenses/stats', async (req, res) => {
     });
   }
 });
+// =============== HEALTH CHECK (Public) ===============
+
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK',
+    message: 'Backend is running',
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+    timestamp: new Date().toISOString()
+  });
+});
+// =============== ADD ADMIN USER CREATION UTILITY ===============
+
+// Add this route to create first admin (run once)
+app.post('/api/setup-admin', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    
+    if (!email || !password || !name) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, password, and name are required'
+      });
+    }
+    
+    // Check if admin already exists
+    const existingAdmin = await User.findOne({ role: 'admin' });
+    if (existingAdmin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Admin user already exists'
+      });
+    }
+    
+    // Create admin user
+    const adminUser = new User({
+      name,
+      email,
+      password,
+      role: 'admin'
+    });
+    
+    await adminUser.save();
+    
+    // Remove password from response
+    const userResponse = adminUser.toObject();
+    delete userResponse.password;
+    
+    res.status(201).json({
+      success: true,
+      message: 'Admin user created successfully',
+      data: userResponse
+    });
+    
+  } catch (error) {
+    console.error('Setup admin error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating admin user'
+    });
+  }
+});
 
 
-const PORT = process.env.PORT || 5001;
+const PORT = process.env.PORT || 5004;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🌐 API: http://localhost:${PORT}`);
   console.log(`👥 Employee API: http://localhost:${PORT}/api/employees`);
   console.log(`💰 Office Rent API: http://localhost:${PORT}/api/office-rents`);
   console.log(`💡 Bills API: http://localhost:${PORT}/api/bills`);
+   console.log(`💡 To create admin: POST http://localhost:${PORT}/api/setup-admin`);
 
 });
