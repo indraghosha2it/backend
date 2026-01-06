@@ -580,6 +580,11 @@ const officeSupplySchema = new mongoose.Schema({
     enum: ['Cash', 'Bank Transfer', 'Mobile Banking', 'Card'],
     required: true
   },
+    note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -597,6 +602,7 @@ officeSupplySchema.pre('save', function(next) {
 
 
 // Software Subscription Schema
+// Software Subscription Schema - UPDATED with duration fields
 const softwareSubscriptionSchema = new mongoose.Schema({
   softwareName: {
     type: String,
@@ -617,6 +623,17 @@ const softwareSubscriptionSchema = new mongoose.Schema({
     enum: ['Cash', 'Bank Transfer', 'Mobile Banking', 'Card'],
     required: true
   },
+  // Add duration fields
+  durationNumber: {
+    type: Number,
+    min: 0,
+    default: null
+  },
+  durationUnit: {
+    type: String,
+    enum: ['day', 'week', 'month', 'year', null],
+    default: null
+  },
   note: {
     type: String,
     trim: true,
@@ -632,12 +649,12 @@ const softwareSubscriptionSchema = new mongoose.Schema({
   }
 });
 
-
 // Add pre-save middleware
 softwareSubscriptionSchema.pre('save', function(next) {
   this.updatedAt = Date.now();
   next();
 });
+
 
 
 
@@ -2209,6 +2226,7 @@ app.get('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req,
 });
 
 // Add office supplies (multiple)
+// Add office supplies (multiple) - UPDATED with note field
 app.post('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     console.log('Received office supplies data:', req.body);
@@ -2228,7 +2246,7 @@ app.post('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req
     const errors = [];
     
     for (const supplyData of suppliesData) {
-      const { name, date, price, paymentMethod } = supplyData;
+      const { name, date, price, paymentMethod, note } = supplyData;
       
       // Skip if required fields are empty
       if (!name || !price || !date) {
@@ -2244,11 +2262,13 @@ app.post('/api/office-supplies', requireAuth(['admin', 'moderator']), async (req
           name,
           date: new Date(date),
           price: parseFloat(price),
-          paymentMethod: paymentMethod
+          paymentMethod: paymentMethod || 'Cash',
+          note: note || ''
         });
         
         await supply.save();
         savedSupplies.push(supply);
+        console.log(`Saved supply: ${name} with note: ${note}`);
         
       } catch (error) {
         errors.push({
@@ -2358,6 +2378,7 @@ app.get('/api/office-supplies/stats', requireAuth(['admin', 'moderator']), async
 // =============== UPDATE OFFICE SUPPLY ROUTE ===============
 
 // Update single office supply
+// Update single office supply - UPDATED with note field
 app.put('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (req, res) => {
   try {
     const { id } = req.params;
@@ -2369,7 +2390,7 @@ app.put('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (
       });
     }
     
-    const { name, date, price, paymentMethod } = req.body;
+    const { name, date, price, paymentMethod, note } = req.body;
     
     // Validation
     if (!name || !date || !price) {
@@ -2384,6 +2405,7 @@ app.put('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (
       date: new Date(date),
       price: parseFloat(price),
       paymentMethod: paymentMethod || 'Cash',
+      note: note || '',
       updatedAt: Date.now()
     };
     
@@ -2407,6 +2429,32 @@ app.put('/api/office-supplies/:id', requireAuth(['admin', 'moderator']), async (
     });
   } catch (error) {
     console.error('Error updating supply:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+// Add this route to add note field to existing office supplies
+app.post('/api/migrate-office-supplies-note', requireAuth(['admin', 'moderator']), async (req, res) => {
+  try {
+    // Add note field to all existing office supplies
+    const result = await OfficeSupply.updateMany(
+      { note: { $exists: false } },
+      {
+        $set: {
+          note: ''
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `Updated ${result.modifiedCount} office supplies with note field`,
+      data: result
+    });
+  } catch (error) {
+    console.error('Migration error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
@@ -2437,7 +2485,8 @@ app.get('/api/software-subscriptions', requireAuth(['admin']),  async (req, res)
 });
 
 // Add software subscriptions (multiple)
-app.post('/api/software-subscriptions', requireAuth(['admin']),  async (req, res) => {
+// Add software subscriptions (multiple) - UPDATED with duration fields
+app.post('/api/software-subscriptions', requireAuth(['admin']), async (req, res) => {
   try {
     console.log('Received subscriptions data:', req.body);
     
@@ -2456,7 +2505,7 @@ app.post('/api/software-subscriptions', requireAuth(['admin']),  async (req, res
     const errors = [];
     
     for (const subData of subscriptionsData) {
-      const { softwareName, amount, date, paymentMethod, note } = subData;
+      const { softwareName, amount, date, paymentMethod, note, durationNumber, durationUnit } = subData;
       
       // Skip if required fields are empty
       if (!softwareName || !amount || !date) {
@@ -2473,12 +2522,14 @@ app.post('/api/software-subscriptions', requireAuth(['admin']),  async (req, res
           amount: parseFloat(amount),
           date: new Date(date),
           paymentMethod: paymentMethod || 'Cash',
-          note: note || ''
+          note: note || '',
+          durationNumber: durationNumber ? parseInt(durationNumber) : null,
+          durationUnit: durationUnit || null
         });
         
         await subscription.save();
         savedSubscriptions.push(subscription);
-        console.log(`Saved subscription: ${softwareName}`);
+        console.log(`Saved subscription: ${softwareName} with duration: ${durationNumber} ${durationUnit}`);
         
       } catch (error) {
         console.error(`Error saving subscription "${softwareName}":`, error);
@@ -2508,7 +2559,8 @@ app.post('/api/software-subscriptions', requireAuth(['admin']),  async (req, res
 });
 
 // Update single subscription
-app.put('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, res) => {
+// Update single subscription - UPDATED with duration fields
+app.put('/api/software-subscriptions/:id', requireAuth(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     console.log(`Updating subscription with ID: ${id}`, req.body);
@@ -2520,7 +2572,7 @@ app.put('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, 
       });
     }
     
-    const { softwareName, amount, date, paymentMethod, note } = req.body;
+    const { softwareName, amount, date, paymentMethod, note, durationNumber, durationUnit } = req.body;
     
     // Validation
     if (!softwareName || !date || !amount) {
@@ -2536,6 +2588,8 @@ app.put('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, 
       date: new Date(date),
       paymentMethod: paymentMethod || 'Cash',
       note: note || '',
+      durationNumber: durationNumber ? parseInt(durationNumber) : null,
+      durationUnit: durationUnit || null,
       updatedAt: Date.now()
     };
     
@@ -2567,7 +2621,6 @@ app.put('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, 
     });
   }
 });
-
 // Delete single subscription
 app.delete('/api/software-subscriptions/:id', requireAuth(['admin']),  async (req, res) => {
   try {
@@ -2652,6 +2705,38 @@ app.get('/api/software-subscriptions/stats', requireAuth(['admin']),  async (req
     });
   } catch (error) {
     console.error('Error in subscription stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+// Add this route to add duration fields to existing subscriptions
+app.post('/api/migrate-subscriptions-duration', requireAuth(['admin']), async (req, res) => {
+  try {
+    // Add durationNumber and durationUnit fields to all existing subscriptions
+    const result = await SoftwareSubscription.updateMany(
+      {
+        $or: [
+          { durationNumber: { $exists: false } },
+          { durationUnit: { $exists: false } }
+        ]
+      },
+      {
+        $set: {
+          durationNumber: null,
+          durationUnit: null
+        }
+      }
+    );
+    
+    res.json({
+      success: true,
+      message: `Updated ${result.modifiedCount} subscriptions with duration fields`,
+      data: result
+    });
+  } catch (error) {
+    console.error('Migration error:', error);
     res.status(500).json({ 
       success: false, 
       error: error.message 
