@@ -370,6 +370,17 @@ const employeeSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+   // Add new fields
+  maidFee: {
+    type: Number,
+    default: 500,
+    min: 0
+  },
+  foodCost: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   calculatedSalary: {
     type: Number,
     default: 0
@@ -426,11 +437,13 @@ employeeSchema.pre('save', function(next) {
     this.salaryYear = date.getFullYear();
   }
   
-  // Calculate salary
+  // Calculate salary with maidFee and foodCost deductions
   if (this.salary && this.workingDays && this.absentDays !== undefined) {
     const perDaySalary = this.salary / this.workingDays;
-    const deduction = perDaySalary * this.absentDays;
-    this.calculatedSalary = Math.max(0, this.salary - deduction);
+    const absenceDeduction = perDaySalary * this.absentDays;
+    const otherDeductions = (this.maidFee || 0) + (this.foodCost || 0);
+    const totalDeductions = absenceDeduction + otherDeductions;
+    this.calculatedSalary = Math.max(0, this.salary - totalDeductions);
   } else {
     this.calculatedSalary = this.salary || 0;
   }
@@ -448,16 +461,23 @@ employeeSchema.pre('findOneAndUpdate', function(next) {
     update.salaryYear = date.getFullYear();
   }
   
-  // If salary is being updated, recalculate
-  if (update.salary !== undefined || update.workingDays !== undefined || update.absentDays !== undefined) {
+  // If salary is being updated, recalculate with maidFee and foodCost
+  if (update.salary !== undefined || update.workingDays !== undefined || 
+      update.absentDays !== undefined || update.maidFee !== undefined || 
+      update.foodCost !== undefined) {
+    
     const salary = update.salary || this._update.salary;
     const workingDays = update.workingDays || this._update.workingDays;
     const absentDays = update.absentDays || this._update.absentDays;
+    const maidFee = update.maidFee || this._update.maidFee || 500;
+    const foodCost = update.foodCost || this._update.foodCost || 0;
     
     if (salary && workingDays && absentDays !== undefined) {
       const perDaySalary = salary / workingDays;
-      const deduction = perDaySalary * absentDays;
-      update.calculatedSalary = Math.max(0, salary - deduction);
+      const absenceDeduction = perDaySalary * absentDays;
+      const otherDeductions = maidFee + foodCost;
+      const totalDeductions = absenceDeduction + otherDeductions;
+      update.calculatedSalary = Math.max(0, salary - totalDeductions);
     }
   }
   
@@ -751,6 +771,41 @@ extraExpenseSchema.pre('save', function(next) {
 });
 
 
+// =============== FOOD COST SCHEMA ===============
+const foodCostSchema = new mongoose.Schema({
+  date: {
+    type: Date,
+    required: true,
+    unique: true, // This ensures only one entry per date
+    index: true
+  },
+  cost: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  note: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// Add pre-save middleware
+foodCostSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
+
+
 const Employee = mongoose.model('Employee', employeeSchema);
 const OfficeRent = mongoose.model('OfficeRent', officeRentSchema);
 const Bill = mongoose.model('Bill', billSchema);
@@ -758,6 +813,7 @@ const OfficeSupply = mongoose.model('OfficeSupply', officeSupplySchema);
 const SoftwareSubscription = mongoose.model('SoftwareSubscription', softwareSubscriptionSchema);
 const TransportExpense = mongoose.model('TransportExpense', transportExpenseSchema);
 const ExtraExpense = mongoose.model('ExtraExpense', extraExpenseSchema);
+const FoodCost = mongoose.model('FoodCost', foodCostSchema);
 
 
 
@@ -795,14 +851,13 @@ app.get('/api/employees', requireAuth(['admin']), async (req, res) => {
 // Add new employee
 // Add new employee - UPDATED VERSION
 // Add new employee - With detailed error logging
-// Clean version - this should work now
-// Add new employee - UPDATED with duplicate check
-// Add new employee - FIXED VERSION
+// Add new employee - FIXED VERSION with maidFee and foodCost
 app.post('/api/employees',requireAuth(['admin']), async (req, res) => {
   try {
     console.log('Received employee data:', req.body);
     
-    const { name, designation, salary, workingDays, absentDays, paymentMethod, notes, salaryDate } = req.body;
+    const { name, designation, salary, workingDays, absentDays, 
+            maidFee, foodCost, paymentMethod, notes, salaryDate } = req.body;
     
     // Validation
     if (!name || !designation || !salary || !salaryDate) {
@@ -841,6 +896,8 @@ app.post('/api/employees',requireAuth(['admin']), async (req, res) => {
       salary: parseFloat(salary),
       workingDays: parseInt(workingDays) || 26,
       absentDays: parseInt(absentDays) || 0,
+      maidFee: parseFloat(maidFee) || 500, // Add maidFee
+      foodCost: parseFloat(foodCost) || 0, // Add foodCost
       paymentMethod: paymentMethod || 'Bank Transfer',
       notes: notes || '',
       salaryDate: salaryDateObj,
@@ -1016,6 +1073,7 @@ app.get('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
 // Update employee
 // Update employee - UPDATED VERSION
 // Update employee - UPDATED
+// Update employee - UPDATED with maidFee and foodCost
 app.put('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
@@ -1028,7 +1086,8 @@ app.put('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
       });
     }
     
-    const { name, designation, salary, workingDays, absentDays, paymentMethod, notes, salaryDate } = req.body;
+    const { name, designation, salary, workingDays, absentDays, 
+            maidFee, foodCost, paymentMethod, notes, salaryDate } = req.body;
     
     // Validation
     if (!name || !designation || !salary || !salaryDate) {
@@ -1065,6 +1124,8 @@ app.put('/api/employees/:id', requireAuth(['admin']), async (req, res) => {
       salary: parseFloat(salary),
       workingDays: parseInt(workingDays) || 26,
       absentDays: parseInt(absentDays) || 0,
+      maidFee: parseFloat(maidFee) || 500, // Add maidFee
+      foodCost: parseFloat(foodCost) || 0, // Add foodCost
       paymentMethod: paymentMethod || 'Bank Transfer',
       notes: notes || '',
       salaryDate: salaryDateObj
@@ -1207,6 +1268,39 @@ app.get('/api/migrate-employees-fix', requireAuth(['admin']), async (req, res) =
     });
   }
 });
+
+// // Migration route to add maidFee and foodCost to existing employees
+// app.post('/api/migrate-employee-fields', requireAuth(['admin']), async (req, res) => {
+//   try {
+//     // Add maidFee and foodCost fields to all existing employees
+//     const result = await Employee.updateMany(
+//       {
+//         $or: [
+//           { maidFee: { $exists: false } },
+//           { foodCost: { $exists: false } }
+//         ]
+//       },
+//       {
+//         $set: {
+//           maidFee: 500,
+//           foodCost: 0
+//         }
+//       }
+//     );
+    
+//     res.json({
+//       success: true,
+//       message: `Updated ${result.modifiedCount} employees with maidFee and foodCost fields`,
+//       data: result
+//     });
+//   } catch (error) {
+//     console.error('Migration error:', error);
+//     res.status(500).json({ 
+//       success: false, 
+//       error: error.message 
+//     });
+//   }
+// });
 
 // =============== OFFICE RENT ROUTES ===============
 
@@ -3249,6 +3343,394 @@ app.get('/api/extra-expenses/stats', requireAuth(['admin', 'moderator']), async 
     });
   }
 });
+
+
+
+// =============== FOOD COST ROUTES ===============
+
+// Get all food costs
+app.get('/api/food-costs', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const foodCosts = await FoodCost.find().sort({ date: -1 });
+    res.json({
+      success: true,
+      count: foodCosts.length,
+      data: foodCosts
+    });
+  } catch (error) {
+    console.error('Error fetching food costs:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get single food cost by ID
+app.get('/api/food-costs/:id', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid food cost ID format' 
+      });
+    }
+    
+    const foodCost = await FoodCost.findById(id);
+    
+    if (!foodCost) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Food cost record not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      data: foodCost
+    });
+  } catch (error) {
+    console.error('Error fetching food cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Add new food cost (ONE ENTRY PER DAY)
+app.post('/api/food-costs', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    console.log('Received food cost data:', req.body);
+    
+    const { date, cost, note } = req.body;
+    
+    // Validation
+    if (!date || !cost) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Date and cost amount are required' 
+      });
+    }
+    
+    // Parse the date
+    const foodDate = new Date(date);
+    
+    // Check if food cost already exists for this date
+    const existingFoodCost = await FoodCost.findOne({
+      date: {
+        $gte: new Date(foodDate.setHours(0, 0, 0, 0)),
+        $lt: new Date(foodDate.setHours(23, 59, 59, 999))
+      }
+    });
+    
+    if (existingFoodCost) {
+      return res.status(400).json({
+        success: false,
+        message: `Food cost record for ${foodDate.toLocaleDateString()} already exists. Please edit the existing record instead.`,
+        existingData: existingFoodCost
+      });
+    }
+    
+    const foodCost = new FoodCost({
+      date: new Date(date),
+      cost: parseFloat(cost),
+      note: note || ''
+    });
+    
+    await foodCost.save();
+    
+    console.log('Food cost saved:', foodCost);
+    
+    res.status(201).json({
+      success: true,
+      message: 'Food cost saved successfully',
+      data: foodCost
+    });
+  } catch (error) {
+    console.error('Error saving food cost:', error);
+    
+    // Handle duplicate key error (MongoDB unique constraint)
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: `Food cost record for this date already exists. Please edit the existing record instead.`
+      });
+    }
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const messages = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: messages
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Update food cost
+app.put('/api/food-costs/:id', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid food cost ID format' 
+      });
+    }
+    
+    const { date, cost, note } = req.body;
+    
+    // Validation
+    if (!date || !cost) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Date and cost amount are required' 
+      });
+    }
+    
+    // Parse the date
+    const foodDate = new Date(date);
+    
+    // Check if another food cost already exists for this date (excluding current record)
+    const existingFoodCost = await FoodCost.findOne({
+      _id: { $ne: id }, // Exclude current record
+      date: {
+        $gte: new Date(foodDate.setHours(0, 0, 0, 0)),
+        $lt: new Date(foodDate.setHours(23, 59, 59, 999))
+      }
+    });
+    
+    if (existingFoodCost) {
+      return res.status(400).json({
+        success: false,
+        message: `Another food cost record for ${foodDate.toLocaleDateString()} already exists. Please choose a different date.`
+      });
+    }
+    
+    const updateData = {
+      date: new Date(date),
+      cost: parseFloat(cost),
+      note: note || '',
+      updatedAt: Date.now()
+    };
+    
+    const foodCost = await FoodCost.findByIdAndUpdate(
+      id, 
+      updateData, 
+      { new: true, runValidators: true }
+    );
+    
+    if (!foodCost) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Food cost record not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Food cost updated successfully',
+      data: foodCost
+    });
+  } catch (error) {
+    console.error('Error updating food cost:', error);
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot update: Another food cost record for this date already exists.'
+      });
+    }
+    
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Delete food cost
+app.delete('/api/food-costs/:id', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const foodCost = await FoodCost.findByIdAndDelete(id);
+    
+    if (!foodCost) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Food cost record not found' 
+      });
+    }
+    
+    res.json({
+      success: true,
+      message: 'Food cost deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting food cost:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get food costs by month
+app.get('/api/food-costs/month/:year/:month', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const { year, month } = req.params;
+    
+    const startDate = new Date(year, month - 1, 1);
+    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+    
+    const foodCosts = await FoodCost.find({
+      date: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    }).sort({ date: 1 });
+    
+    const totalCost = foodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    
+    res.json({
+      success: true,
+      data: {
+        month: `${year}-${String(month).padStart(2, '0')}`,
+        monthName: new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' }),
+        totalCost,
+        averagePerDay: foodCosts.length > 0 ? totalCost / foodCosts.length : 0,
+        records: foodCosts.length,
+        foodCosts
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching monthly food costs:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get food cost statistics
+app.get('/api/food-costs/stats', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const foodCosts = await FoodCost.find().sort({ date: 1 });
+    
+    const totalCost = foodCosts.reduce((sum, cost) => sum + cost.cost, 0);
+    const totalDays = foodCosts.length;
+    
+    // Group by month
+    const monthlyStats = {};
+    foodCosts.forEach(cost => {
+      const date = new Date(cost.date);
+      const monthYear = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+      
+      if (!monthlyStats[monthYear]) {
+        monthlyStats[monthYear] = {
+          month: monthYear,
+          monthName: monthName,
+          totalCost: 0,
+          days: 0,
+          averagePerDay: 0
+        };
+      }
+      
+      monthlyStats[monthYear].totalCost += cost.cost;
+      monthlyStats[monthYear].days += 1;
+    });
+    
+    // Calculate averages
+    Object.values(monthlyStats).forEach(stat => {
+      stat.averagePerDay = stat.days > 0 ? stat.totalCost / stat.days : 0;
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        totalCost,
+        totalDays,
+        averagePerDay: totalDays > 0 ? totalCost / totalDays : 0,
+        monthlyStats: Object.values(monthlyStats).sort((a, b) => b.month.localeCompare(a.month))
+      }
+    });
+  } catch (error) {
+    console.error('Error in food cost stats:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Check if food cost exists for a specific date
+app.get('/api/food-costs/check-date', requireAuth(['admin', 'moderator', 'user']), async (req, res) => {
+  try {
+    const { date } = req.query;
+    
+    if (!date) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Date query parameter is required' 
+      });
+    }
+    
+    const checkDate = new Date(date);
+    if (isNaN(checkDate.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Invalid date format' 
+      });
+    }
+    
+    const startOfDay = new Date(checkDate.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(checkDate.setHours(23, 59, 59, 999));
+    
+    const existingFoodCost = await FoodCost.findOne({
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
+    });
+    
+    if (existingFoodCost) {
+      return res.json({
+        success: true,
+        exists: true,
+        message: `Food cost record for ${checkDate.toLocaleDateString()} already exists`,
+        data: existingFoodCost
+      });
+    }
+    
+    res.json({
+      success: true,
+      exists: false,
+      message: 'No food cost record found for this date'
+    });
+  } catch (error) {
+    console.error('Error checking date:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Add this with your other route logging
 // =============== HEALTH CHECK (Public) ===============
 
 app.get('/api/health', (req, res) => {
@@ -3319,6 +3801,8 @@ app.listen(PORT, () => {
   console.log(`👥 Employee API: http://localhost:${PORT}/api/employees`);
   console.log(`💰 Office Rent API: http://localhost:${PORT}/api/office-rents`);
   console.log(`💡 Bills API: http://localhost:${PORT}/api/bills`);
+  console.log(`🍽️  Food Costs API: http://localhost:${PORT}/api/food-costs`);
+
    console.log(`💡 To create admin: POST http://localhost:${PORT}/api/setup-admin`);
 
 });
