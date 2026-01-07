@@ -55,7 +55,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 
 
 
-// =============== USER SCHEMA & MODEL ===============
+// =============== USER SCHEMA &  ===============
 
 // Add this after your other schemas, before routes
 const userSchema = new mongoose.Schema({
