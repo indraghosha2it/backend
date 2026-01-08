@@ -9,25 +9,67 @@ const cookieParser = require('cookie-parser');
 require('dotenv').config();
 
 const app = express();
-// const corsOptions = {
-//   origin: 'http://localhost:3002', // or use an array for multiple origins
-//   credentials: true, // This is important!
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-//   allowedHeaders: ['Content-Type', 'Authorization']
-// };
-const allowedOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3003'];
 
+// const allowedOrigins = ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3003', 'https://dailycost.a2itltd.com'];
+
+// const corsOptions = {
+//   origin: function (origin, callback) {
+//     if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+//       callback(null, true);
+//     } else {
+//       callback(new Error('Not allowed by CORS'));
+//     }
+//   },
+//   credentials: true
+// };
+
+
+// Backend CORS Configuration (server.js)
+// Backend CORS Configuration (server.js)
+// Backend CORS Configuration (server.js)
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+    // Allow all origins for development (restrict in production)
+    if (!origin || process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
+    
+    const allowedOrigins = [
+      'http://localhost:3000', 
+      'http://localhost:3001', 
+      'http://localhost:3003', 
+      'https://dailycost.a2itltd.com'
+    ];
+    
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn('Blocked by CORS:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type', 
+    'Authorization', 
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  exposedHeaders: ['Set-Cookie'],
+  maxAge: 86400
 };
 
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
+
+
+
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
 
 
 // Middleware
@@ -234,6 +276,7 @@ app.post('/api/auth/register', requireAuth(['admin']), async (req, res) => {
 });
 
 // User login
+// User login route - FIXED cookie settings
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -280,14 +323,19 @@ app.post('/api/auth/login', async (req, res) => {
     const userResponse = user.toObject();
     delete userResponse.password;
     
-    // Set cookie
+    // Set HTTP-only cookie
     res.cookie('auth_token', token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      secure: false, // Set to true in production with HTTPS
+      sameSite: 'lax', // Use 'lax' for development, 'none' for production cross-site
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      path: '/'
+      path: '/',
+      // Don't set domain for localhost
     });
+    
+    // Also set CORS headers
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Origin', req.headers.origin || 'http://localhost:3000');
     
     res.json({
       success: true,
@@ -306,8 +354,13 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Get current user info
+// Get current user info
 app.get('/api/auth/me', requireAuth([]), async (req, res) => {
   try {
+    // Set CORS headers explicitly
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Origin', req.headers.origin || 'http://localhost:3000');
+    
     res.json({
       success: true,
       data: req.user
@@ -333,6 +386,27 @@ app.post('/api/auth/logout', (req, res) => {
     message: 'Logged out successfully'
   });
 });
+// Debug route to check CORS headers
+app.get('/api/debug/cors', (req, res) => {
+  res.json({
+    headers: req.headers,
+    origin: req.headers.origin,
+    cors: 'Testing CORS configuration'
+  });
+});
+
+// Health check with CORS headers
+app.get('/api/health-check', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.json({ 
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    cors: 'enabled'
+  });
+});
+
+
 
 
 
@@ -4066,6 +4140,8 @@ app.post('/api/setup-admin', async (req, res) => {
     });
   }
 });
+
+
 
 
 const PORT = process.env.PORT || 5004;
